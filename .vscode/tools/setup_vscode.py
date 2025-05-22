@@ -155,11 +155,14 @@ def overwrite_default_python_interpreter(isaaclab_settings: str) -> str:
         else:
             python_exe = python_exe.replace(f"kit{os.sep}python{os.sep}bin{os.sep}python3", "python.sh")
 
+    # Escape backslashes for the regex replacement string
+    python_exe_escaped = python_exe.replace("\\", "\\\\")
+
     # replace the default python interpreter in the Isaac Lab settings file with the path to the
     # python interpreter in the Isaac Lab directory
     isaaclab_settings = re.sub(
-        r"\"python.defaultInterpreterPath\": \".*?\"",
-        f'"python.defaultInterpreterPath": "{python_exe}"',
+        r'"python.defaultInterpreterPath": ".*?"',
+        f'"python.defaultInterpreterPath": "{python_exe_escaped}"',
         isaaclab_settings,
         flags=re.DOTALL,
     )

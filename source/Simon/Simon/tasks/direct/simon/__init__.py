@@ -13,12 +13,11 @@ from . import agents
 
 
 gym.register(
-    id="Template-Simon-Direct-v0",
+    id="Simon-Walk",
     entry_point=f"{__name__}.simon_env:SimonEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.simon_env_cfg:SimonEnvCfg",
-        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_amp_cfg.yaml",
-        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+        "env_cfg_entry_point": f"{__name__}.simon_env_cfg:SimonWalkEnvCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_walk_cfg.yaml",
     },
 )
