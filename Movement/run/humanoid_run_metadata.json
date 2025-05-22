@@ -1,0 +1,47 @@
+{
+  "fps": {
+    "dtype": "int64",
+    "shape": "()",
+    "file": "humanoid_run_fps.csv"
+  },
+  "dof_names": {
+    "dtype": "<U16",
+    "shape": "(28,)",
+    "file": "humanoid_run_dof_names.csv"
+  },
+  "body_names": {
+    "dtype": "<U15",
+    "shape": "(15,)",
+    "file": "humanoid_run_body_names.csv"
+  },
+  "dof_positions": {
+    "dtype": "float32",
+    "shape": "(82, 28)",
+    "file": "humanoid_run_dof_positions.csv"
+  },
+  "dof_velocities": {
+    "dtype": "float32",
+    "shape": "(82, 28)",
+    "file": "humanoid_run_dof_velocities.csv"
+  },
+  "body_positions": {
+    "dtype": "float32",
+    "shape": "(82, 15, 3)",
+    "file": "humanoid_run_body_positions.csv"
+  },
+  "body_rotations": {
+    "dtype": "float32",
+    "shape": "(82, 15, 4)",
+    "file": "humanoid_run_body_rotations.csv"
+  },
+  "body_linear_velocities": {
+    "dtype": "float32",
+    "shape": "(82, 15, 3)",
+    "file": "humanoid_run_body_linear_velocities.csv"
+  },
+  "body_angular_velocities": {
+    "dtype": "float32",
+    "shape": "(82, 15, 3)",
+    "file": "humanoid_run_body_angular_velocities.csv"
+  }
+}
