@@ -21,3 +21,13 @@ gym.register(
         "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_walk_cfg.yaml",
     },
 )
+
+gym.register(
+    id="Simon-Shoes-Walk",
+    entry_point=f"{__name__}.simon_env:SimonEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.simon_shoes_env_cfg:SimonShoesWalkEnvCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_walk_cfg.yaml",
+    },
+)
