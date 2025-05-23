@@ -48,60 +48,51 @@ simon_CFG = ArticulationCfg(
 """Configuration for the 28-DOFs Mujoco Humanoid robot."""
 
 ##
-# Soft Body Configurations for Feet
+# Deformable Feet Configurations
 ##
 
-# Define foot size (X, Y, Z) based on typical humanoid foot proportions or your model's specifics
-# Extracted from previous USD: extent = [(-0.0885, -0.045, -0.0275), (0.0885, 0.045, 0.0275)]
-# This means size is (0.177, 0.09, 0.055)
-FOOT_SIZE = (0.177, 0.09, 0.055)
-
-# Stiffness can be controlled by youngs_modulus. Higher is stiffer.
-# Tessellation is default for MeshCuboidCfg. For more control, replace MeshCuboidCfg
-# with UsdFileCfg pointing to a custom mesh USD.
-COMMON_DEFORMABLE_MATERIAL = sim_utils.DeformableBodyMaterialCfg(
-    youngs_modulus=1.0e5,  # Example: 100 kPa. Adjust for desired stiffness.
-    poissons_ratio=0.45    # Example value.
-)
-
-COMMON_DEFORMABLE_PROPS = sim_utils.DeformableBodyPropertiesCfg(
+# Common properties for shoe material and physics
+_DEFORMABLE_PROPS_CFG = sim_utils.DeformableBodyPropertiesCfg(
     rest_offset=0.0,
-    contact_offset=0.001,  # From Isaac Lab tutorial
-    # enable_self_collisions=False, # Default
-    # solver_type="explicit", # Default
+    contact_offset=0.001,
+    # deform_stiffness, damping_stiffness, volume_stiffness were moved to _PHYSICS_MATERIAL_CFG
 )
 
-COMMON_VISUAL_MATERIAL = sim_utils.PreviewSurfaceCfg(
-    diffuse_color=(0.2, 0.2, 0.9),  # Blueish
-    opacity=0.7
+_PHYSICS_MATERIAL_CFG = sim_utils.DeformableBodyMaterialCfg(
+    poissons_ratio=0.4,
+    youngs_modulus=1e5,  # Lower value for softer material, adjust as needed
 )
+
+# Assuming foot dimensions: length=0.2, width=0.1, height=0.05
+# Shoe dimensions: length=0.22, width=0.12, thickness=0.03
+_SHOE_SIZE = (0.22, 0.12, 0.03)
+# Position relative to foot center: -(foot_height/2) - (shoe_thickness/2)
+# -(0.05/2) - (0.03/2) = -0.025 - 0.015 = -0.04
+_SHOE_INIT_POS_Z = -0.04
+
 
 LEFT_FOOT_SOFT_CFG = DeformableObjectCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/left_foot/SoftFootMesh",  # Will be child of the left_foot Xform
+    prim_path="{ENV_REGEX_NS}/Robot/left_foot/SoftFootMesh",  # Default, will be replaced in env_cfg
     spawn=sim_utils.MeshCuboidCfg(
-        size=FOOT_SIZE,
-        visual_material=COMMON_VISUAL_MATERIAL,
-        physics_material=COMMON_DEFORMABLE_MATERIAL,
-        deformable_props=COMMON_DEFORMABLE_PROPS,
+        size=_SHOE_SIZE,
+        deformable_props=_DEFORMABLE_PROPS_CFG,
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.2, 0.8)),  # Blueish color for left shoe
+        physics_material=_PHYSICS_MATERIAL_CFG,
     ),
-    init_state=DeformableObjectCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.0)  # Local position relative to the parent (left_foot prim)
-    ),
-    debug_vis=True  # Shows markers for deformable bodies if enabled in viewport
+    init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, _SHOE_INIT_POS_Z)),
+    debug_vis=True,
 )
-"""Configuration for the soft left foot of the Simon robot."""
+"""Configuration for the left soft shoe."""
 
 RIGHT_FOOT_SOFT_CFG = DeformableObjectCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/right_foot/SoftFootMesh",  # Will be child of the right_foot Xform
+    prim_path="{ENV_REGEX_NS}/Robot/right_foot/SoftFootMesh",  # Default, will be replaced in env_cfg
     spawn=sim_utils.MeshCuboidCfg(
-        size=FOOT_SIZE,  # Assuming same size for the right foot
-        visual_material=COMMON_VISUAL_MATERIAL,
-        physics_material=COMMON_DEFORMABLE_MATERIAL,
-        deformable_props=COMMON_DEFORMABLE_PROPS,
+        size=_SHOE_SIZE,
+        deformable_props=_DEFORMABLE_PROPS_CFG,
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.2, 0.2)),  # Reddish color for right shoe
+        physics_material=_PHYSICS_MATERIAL_CFG,
     ),
-    init_state=DeformableObjectCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.0)  # Local position relative to the parent (right_foot prim)
-    ),
-    debug_vis=True
+    init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, _SHOE_INIT_POS_Z)),
+    debug_vis=True,
 )
-"""Configuration for the soft right foot of the Simon robot."""
+"""Configuration for the right soft shoe."""
