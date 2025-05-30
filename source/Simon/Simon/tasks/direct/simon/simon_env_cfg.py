@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from dataclasses import MISSING
 
-from isaaclab_assets.robots.simonSHOES import simon_CFG  # Changed import
+from isaaclab_assets.robots.simon import simon_CFG  # Changed import
 
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
