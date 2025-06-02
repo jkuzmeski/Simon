@@ -10,3 +10,4 @@
 
 from .simonSHOES import *  # Added import for SimonSHOES
 from .simon import *  # Added import for Simon
+from .simon_half import *  # Added import for Simon half-body

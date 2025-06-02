@@ -31,3 +31,13 @@ gym.register(
         "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_walk_cfg.yaml",
     },
 )
+
+gym.register(
+    id="Simon-Half-Run",
+    entry_point=f"{__name__}.simon_half_env:SimonHalfEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.simon_half_env_cfg:SimonHalfRunEnvCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_cfg.yaml",
+    },
+)

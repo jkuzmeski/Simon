@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Configuration for the 28-DOFs Mujoco Humanoid robot."""
+"""Configuration for the 14-DOFs Simon Half-body Humanoid robot."""
 
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ from isaaclab.assets import ArticulationCfg
 # Configuration
 ##
 
-simon_CFG = ArticulationCfg(
+simon_half_CFG = ArticulationCfg(
     prim_path="{ENV_REGEX_NS}/Robot",
     spawn=sim_utils.UsdFileCfg(
-        usd_path="D:\\Isaac\\Simon\\models\\simon.usda",
+        usd_path="D:\\Isaac\\Simon\\models\\simon_half.usda",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=None,
             max_depenetration_velocity=10.0,
@@ -46,4 +46,4 @@ simon_CFG = ArticulationCfg(
         ),
     },
 )
-"""Configuration for the 28-DOFs Mujoco Humanoid robot."""
+"""Configuration for the 14-DOFs Simon Half-body Humanoid robot."""
