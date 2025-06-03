@@ -29,11 +29,11 @@ class SimonHalfEnvCfg(DirectRLEnvCfg):
     decimation = 2
 
     # spaces
-    observation_space = 55  # 14 DOF pos + 14 DOF vel + 13 root state + 14 prev actions
+    observation_space = 47  # 14 DOF pos + 14 DOF vel + 1 root height + 6 tangent/normal + 3 lin vel + 3 ang vel + 6 key body pos = 47
     action_space = 14  # 14 DOF actions (matching your DOF count)
     state_space = 0
     num_amp_observations = 2
-    amp_observation_space = 55  # Should match observation_space for AMP
+    amp_observation_space = 47  # Should match observation_space for AMP
 
     early_termination = True
     termination_height = 0.4

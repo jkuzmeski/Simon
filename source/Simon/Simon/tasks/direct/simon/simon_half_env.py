@@ -188,8 +188,7 @@ class SimonHalfEnv(DirectRLEnv):
             body_rotations,
             body_linear_velocities,
             body_angular_velocities,
-        ) = self._motion_loader.sample(num_samples=num_samples, times=times)
-        # compute AMP observation
+        ) = self._motion_loader.sample(num_samples=num_samples, times=times)        # compute AMP observation
         amp_observation = compute_obs(
             dof_positions[:, self.motion_dof_indexes],
             dof_velocities[:, self.motion_dof_indexes],
@@ -199,6 +198,26 @@ class SimonHalfEnv(DirectRLEnv):
             body_angular_velocities[:, self.motion_ref_body_index],
             body_positions[:, self.motion_key_body_indexes],
         )
+
+        # Debug information to understand the shape mismatch
+        print(f"Debug - AMP observation shape: {amp_observation.shape}")
+        print(f"Debug - Expected amp_observation_size: {self.amp_observation_size}")
+        print(f"Debug - Total elements: {amp_observation.numel()}")
+        print(f"Debug - num_samples: {num_samples}")
+        print(f"Debug - cfg.num_amp_observations: {self.cfg.num_amp_observations}")
+        print(f"Debug - cfg.amp_observation_space: {self.cfg.amp_observation_space}")
+
+        # Check if reshaping is possible
+        total_elements = amp_observation.numel()
+        if total_elements % self.amp_observation_size != 0:
+            print(f"Warning: Cannot reshape tensor of size {total_elements} to [-1, {self.amp_observation_size}]")
+            # Calculate correct number of samples that fit
+            correct_samples = total_elements // self.amp_observation_size
+            print(f"Adjusting to {correct_samples} samples")
+            # Trim to make it divisible
+            elements_to_keep = correct_samples * self.amp_observation_size
+            amp_observation = amp_observation.flatten()[:elements_to_keep]
+
         return amp_observation.view(-1, self.amp_observation_size)
 
 
