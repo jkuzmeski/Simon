@@ -28,7 +28,7 @@ class SimonHalfEnv(DirectRLEnv):
         # action offset and scale
         dof_lower_limits = self.robot.data.soft_joint_pos_limits[0, :, 0]
         dof_upper_limits = self.robot.data.soft_joint_pos_limits[0, :, 1]
-        self.action_offset = 0.5 * (dof_upper_limits + dof_lower_limits)
+        self.action_offset = 0.25 * (dof_upper_limits + dof_lower_limits)
         self.action_scale = dof_upper_limits - dof_lower_limits
 
         # load motion
@@ -200,12 +200,12 @@ class SimonHalfEnv(DirectRLEnv):
         )
 
         # Debug information to understand the shape mismatch
-        print(f"Debug - AMP observation shape: {amp_observation.shape}")
-        print(f"Debug - Expected amp_observation_size: {self.amp_observation_size}")
-        print(f"Debug - Total elements: {amp_observation.numel()}")
-        print(f"Debug - num_samples: {num_samples}")
-        print(f"Debug - cfg.num_amp_observations: {self.cfg.num_amp_observations}")
-        print(f"Debug - cfg.amp_observation_space: {self.cfg.amp_observation_space}")
+        # print(f"Debug - AMP observation shape: {amp_observation.shape}")
+        # print(f"Debug - Expected amp_observation_size: {self.amp_observation_size}")
+        # print(f"Debug - Total elements: {amp_observation.numel()}")
+        # print(f"Debug - num_samples: {num_samples}")
+        # print(f"Debug - cfg.num_amp_observations: {self.cfg.num_amp_observations}")
+        # print(f"Debug - cfg.amp_observation_space: {self.cfg.amp_observation_space}")
 
         # Check if reshaping is possible
         total_elements = amp_observation.numel()
