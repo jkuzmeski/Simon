@@ -27,8 +27,8 @@ class SimonBiomechEnv(DirectRLEnv):
         # create IMU sensor configuration
         self.imu_cfg = ImuCfg(
             prim_path="/World/envs/env_.*/Robot/simon/pelvis",
-            update_period=0.0,
-            history_length=1,
+            update_period=0.001,
+            history_length=5,
             debug_vis=True,
         )
         super().__init__(cfg, render_mode, **kwargs)
@@ -43,7 +43,7 @@ class SimonBiomechEnv(DirectRLEnv):
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
 
         # DOF and key body indexes
-        key_body_names = ["right_foot", "left_foot"]
+        key_body_names = ["right_foot", "left_foot", "pelvis"]
         self.ref_body_index = self.robot.data.body_names.index(self.cfg.reference_body)
         self.key_body_indexes = [self.robot.data.body_names.index(name) for name in key_body_names]
         self.motion_dof_indexes = self._motion_loader.get_dof_index(self.robot.data.joint_names)
@@ -74,7 +74,7 @@ class SimonBiomechEnv(DirectRLEnv):
         self.scene.clone_environments(copy_from_source=False)
         # add articulation to scene
         self.scene.articulations["robot"] = self.robot
-        
+
         # create IMU sensor after robot is added to scene
         try:
             self.imu_sensor = Imu(self.imu_cfg)
@@ -82,7 +82,7 @@ class SimonBiomechEnv(DirectRLEnv):
         except Exception as e:
             print(f"Warning: Failed to create IMU sensor: {e}")
             self.imu_sensor = None
-        
+
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
