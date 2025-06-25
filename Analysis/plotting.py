@@ -64,6 +64,16 @@ obs = {
     'policy_obs_44': 'left_foot_pos_x',
     'policy_obs_45': 'left_foot_pos_y',
     'policy_obs_46': 'left_foot_pos_z',
+    'imu_acceleration_0': 'imu_acceleration_x',
+    'imu_acceleration_1': 'imu_acceleration_y',
+    'imu_acceleration_2': 'imu_acceleration_z',
+    'imu_angular_velocity_0': 'imu_angular_velocity_x',
+    'imu_angular_velocity_1': 'imu_angular_velocity_y',
+    'imu_angular_velocity_2': 'imu_angular_velocity_z',
+    'imu_orientation_0': 'imu_orientation_x',
+    'imu_orientation_1': 'imu_orientation_y',
+    'imu_orientation_2': 'imu_orientation_z',
+    'imu_orientation_3': 'imu_orientation_w'
 }
 
 
@@ -79,6 +89,9 @@ def preprocess_data(log_folder, obs=obs):
 
     # Concatenate all dataframes
     all_data = pd.concat(data, ignore_index=True)
+    
+    #remove any columns that contain 'amp' in their name
+    all_data = all_data.loc[:, ~all_data.columns.str.contains('amp', case=False, na=False)]
     
     # Ensure the data has the correct number of columns
     expected_columns = len(obs)

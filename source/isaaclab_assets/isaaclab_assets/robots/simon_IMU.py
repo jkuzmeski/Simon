@@ -10,18 +10,16 @@ from __future__ import annotations
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
-from isaaclab.sensors.imu import ImuCfg  # Add this import
-from isaaclab.sensors.contact_sensor import ContactSensorCfg
 
 
 ##
 # Configuration
 ##
 
-simon_CFG = ArticulationCfg(
+simon_IMU = ArticulationCfg(
     prim_path="{ENV_REGEX_NS}/Robot",
     spawn=sim_utils.UsdFileCfg(
-        usd_path="D:\\Isaac\\Simon\\models\\simon.usda",
+        usd_path="D:\\Isaac\\Simon\\models\\humanoid_28\\simon_half.usda",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=None,
             max_depenetration_velocity=10.0,
@@ -47,27 +45,6 @@ simon_CFG = ArticulationCfg(
             damping=None,
         ),
     },
-    sensors={
-        "pelvis_imu": ImuCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/pelvis",  # Make sure this path is correct
-            update_period=0.001,  # Example update period
-            config=ImuCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),  # Example offset
-            gravity_bias=(0.0, 0.0, 9.81),  # Example gravity bias
-        ),
-        "left_foot_contact": ContactSensorCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/left_foot",  # Path to the left foot
-            update_period=0.001,
-            history_length=3,
-            track_air_time=True,
-            track_pose=True
-        ),
-        "right_foot_contact": ContactSensorCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/right_foot", # Path to the right foot
-            update_period=0.001,
-            history_length=3,
-            track_air_time=True,
-            track_pose=True
-        )
-    }
 )
-"""Configuration for the 28-DOFs Mujoco Humanoid robot."""
+"""Configuration for the 14-DOFs Mujoco Humanoid robot."""
+

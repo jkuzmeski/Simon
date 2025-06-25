@@ -223,17 +223,28 @@ def main():
                 
                 # Add extras from current_info
                 if current_info and "extras" in current_info and current_info["extras"]:
+                    #print(f"DEBUG: extras keys: {list(current_info['extras'].keys())}")
                     for key, tensor_val_all_envs in current_info["extras"].items():
-                        if tensor_val_all_envs is not None and tensor_val_all_envs.numel() > 0 and i < tensor_val_all_envs.shape[0]:
-                            item_data_tensor = tensor_val_all_envs[i]
-                            if item_data_tensor is not None:
-                                item_data = item_data_tensor.cpu().numpy()
-                                if item_data.ndim == 0:  # scalar
-                                    data_row[key] = item_data.item()
-                                else:  # vector/tensor, flatten it
-                                    flat_item_data = item_data.flatten()
-                                    for k_idx, k_val in enumerate(flat_item_data):
-                                        data_row[f"{key}_{k_idx}"] = k_val
+                        #print(f"DEBUG: key={key}, type={type(tensor_val_all_envs)}, value={tensor_val_all_envs}")
+                        # Skip if the value is None
+                        if tensor_val_all_envs is None:
+                            continue
+                            
+                        # Check if it's a tensor and has the right shape
+                        if hasattr(tensor_val_all_envs, 'numel') and hasattr(tensor_val_all_envs, 'shape'):
+                            if tensor_val_all_envs.numel() > 0 and i < tensor_val_all_envs.shape[0]:
+                                item_data_tensor = tensor_val_all_envs[i]
+                                if item_data_tensor is not None:
+                                    item_data = item_data_tensor.cpu().numpy()
+                                    if item_data.ndim == 0:  # scalar
+                                        data_row[key] = item_data.item()
+                                    else:  # vector/tensor, flatten it
+                                        flat_item_data = item_data.flatten()
+                                        for k_idx, k_val in enumerate(flat_item_data):
+                                            data_row[f"{key}_{k_idx}"] = k_val
+                        else:
+                            # Handle non-tensor values (like nested dicts or other types)
+                            print(f"Timestep {timestep}")
                 
                 if len(data_row) > 1:  # Only add if there's more than just timestep
                     biomechanics_data_to_save.append(data_row)
