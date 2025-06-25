@@ -193,8 +193,8 @@ def main():
     # reset environment
     current_obs, current_info = env.reset()  # Get initial obs and info
     timestep = 0
-    # simulate environment
-    while simulation_app.is_running():
+    # simulate environment time step is less than 1000
+    while timestep < 1000:
         start_time = time.time()
 
         # --- Save biomechanics data for current_obs and current_info ---

@@ -64,7 +64,7 @@ agent:
   class: AMP
   rollouts: 16
   learning_epochs: 6
-  mini_batches: 2
+  mini_batches: 4
   discount_factor: 0.99
   lambda: 0.95
   learning_rate: 5.0e-05
@@ -98,7 +98,7 @@ agent:
   # logging and checkpoint
   experiment:
     directory: "Simon_Half_Run"
-    experiment_name: "Overclock"
+    experiment_name: "100K_run"
     write_interval: auto
     checkpoint_interval: auto
 
@@ -107,5 +107,5 @@ agent:
 # https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
 trainer:
   class: SequentialTrainer
-  timesteps: 5000
+  timesteps: 100000
   environment_info: log
