@@ -14,7 +14,8 @@ from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils.math import quat_rotate
-from isaaclab.sensors import Imu, ImuCfg
+from isaaclab.sensors import Imu, ImuCfg, ContactSensor, ContactSensorCfg
+
 
 from .simon_biomech_env_cfg import SimonBiomechEnvCfg
 from .motions import MotionLoader
@@ -31,6 +32,23 @@ class SimonBiomechEnv(DirectRLEnv):
             history_length=5,
             debug_vis=True,
         )
+
+        # create contact sensor configurations for feet
+        self.left_foot_contact_cfg = ContactSensorCfg(
+            prim_path="/World/envs/env_.*/Robot/simon/left_foot",  # Verify this path exists
+            update_period=0.001,
+            history_length=5,
+            debug_vis=True,
+            # filter_prim_paths_expr=["/World/envs/env_.*/Robot/simon/left_foot/.*"],  # Filter for left foot contacts
+        )
+
+        self.right_foot_contact_cfg = ContactSensorCfg(
+            prim_path="/World/envs/env_.*/Robot/simon/right_foot",  # Verify this path exists
+            update_period=0.001,
+            history_length=5,
+            debug_vis=True,
+        )
+
         super().__init__(cfg, render_mode, **kwargs)
 
         # action offset and scale
@@ -83,6 +101,20 @@ class SimonBiomechEnv(DirectRLEnv):
             print(f"Warning: Failed to create IMU sensor: {e}")
             self.imu_sensor = None
 
+        try:
+            self.left_foot_contact = ContactSensor(self.left_foot_contact_cfg)
+            self.scene.sensors["left_foot_contact"] = self.left_foot_contact
+        except Exception as e:
+            print(f"Warning: Failed to create left foot contact sensor: {e}")
+            self.left_foot_contact = None
+
+        try:
+            self.right_foot_contact = ContactSensor(self.right_foot_contact_cfg)
+            self.scene.sensors["right_foot_contact"] = self.right_foot_contact
+        except Exception as e:
+            print(f"Warning: Failed to create right foot contact sensor: {e}")
+            self.right_foot_contact = None
+
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
@@ -118,16 +150,36 @@ class SimonBiomechEnv(DirectRLEnv):
             except Exception as e:
                 print(f"Warning: Failed to get IMU data: {e}")
 
+        # collect contact sensor data
+        left_contact_data = {}
+        if hasattr(self, 'left_foot_contact') and self.left_foot_contact is not None:
+            try:
+                left_contact_data = {
+                    'net_force_left_foot': self.left_foot_contact.data.net_forces_w.clone(),
+                }
+            except Exception as e:
+                print(f" Failed to get left foot contact data: {e}")
+        right_contact_data = {}
+        if hasattr(self, 'right_foot_contact') and self.right_foot_contact is not None:
+            try:
+                right_contact_data = {
+                    'net_force_right_foot': self.right_foot_contact.data.net_forces_w.clone(),
+                }
+            except Exception as e:
+                print(f"Failed to get right foot contact data: {e}")
+
         # update AMP observation history
         for i in reversed(range(self.cfg.num_amp_observations - 1)):
             self.amp_observation_buffer[:, i + 1] = self.amp_observation_buffer[:, i]
         # build AMP observation
         self.amp_observation_buffer[:, 0] = obs.clone()
 
-        # combine AMP observations and IMU data in extras
+        # combine all sensor data in extras
         self.extras = {
             "amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size),
-            **imu_data
+            **imu_data,
+            **left_contact_data,
+            **right_contact_data,
         }
 
         return {"policy": obs}

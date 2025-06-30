@@ -24,7 +24,9 @@ simon_IMU = ArticulationCfg(
             disable_gravity=None,
             max_depenetration_velocity=10.0,
             enable_gyroscopic_forces=True,
+
         ),
+        activate_contact_sensors=True,
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=True,
             solver_position_iteration_count=4,

@@ -64,6 +64,9 @@ obs = {
     'policy_obs_44': 'left_foot_pos_x',
     'policy_obs_45': 'left_foot_pos_y',
     'policy_obs_46': 'left_foot_pos_z',
+    'policy_obs_47': 'pelvis_pos_x',
+    'policy_obs_48': 'pelvis_pos_y',
+    'policy_obs_49': 'pelvis_pos_z',
     'imu_acceleration_0': 'imu_acceleration_x',
     'imu_acceleration_1': 'imu_acceleration_y',
     'imu_acceleration_2': 'imu_acceleration_z',
@@ -73,7 +76,13 @@ obs = {
     'imu_orientation_0': 'imu_orientation_x',
     'imu_orientation_1': 'imu_orientation_y',
     'imu_orientation_2': 'imu_orientation_z',
-    'imu_orientation_3': 'imu_orientation_w'
+    'imu_orientation_3': 'imu_orientation_w',
+    'net_force_left_foot_0': 'net_force_left_foot_x',
+    'net_force_left_foot_1': 'net_force_left_foot_y',
+    'net_force_left_foot_2': 'net_force_left_foot_z',
+    'net_force_right_foot_0': 'net_force_right_foot_x',
+    'net_force_right_foot_1': 'net_force_right_foot_y',
+    'net_force_right_foot_2': 'net_force_right_foot_z',
 }
 
 
@@ -90,16 +99,22 @@ def preprocess_data(log_folder, obs=obs):
     # Concatenate all dataframes
     all_data = pd.concat(data, ignore_index=True)
     
-    #remove any columns that contain 'amp' in their name
+    # remove any columns that contain 'amp' in their name
     all_data = all_data.loc[:, ~all_data.columns.str.contains('amp', case=False, na=False)]
     
     # Ensure the data has the correct number of columns
     expected_columns = len(obs)
     if all_data.shape[1] != expected_columns:
+        # print the columns for debugging
+        # print(f"Columns found: {all_data.columns.tolist()}")
+        # print the names of the columns in all_data dataframe that are not in the obs dict
         raise ValueError(f"Expected {expected_columns} columns, but got {all_data.shape[1]}.")
     
     # # Map the variable names to their corresponding indices
     all_data = all_data.rename(columns=obs)
+    # # get rid of the columns that are not in the obs dict
+    #missing_columns = [col for col in all_data.columns if col not in obs.values()]
+    # print(missing_columns)
     print(all_data.columns)
 
     return all_data

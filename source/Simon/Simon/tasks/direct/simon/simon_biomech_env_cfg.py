@@ -63,10 +63,11 @@ class SimonBiomechEnvCfg(DirectRLEnvCfg):
 
     # robot
     robot: ArticulationCfg = simon_IMU.replace(prim_path="/World/envs/env_.*/Robot").replace(  # Changed to simon_half_CFG
+        spawn=simon_IMU.spawn.replace(activate_contact_sensors=True),  # Add this line
         actuators={
             "body": ImplicitActuatorCfg(
                 joint_names_expr=[".*"],
-                velocity_limit=100.0,
+                velocity_limit_sim=100.0,  # Changed from velocity_limit
                 stiffness=None,
                 damping=None,
             ),
