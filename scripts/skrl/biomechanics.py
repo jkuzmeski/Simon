@@ -302,6 +302,10 @@ def main():
                 
                 if len(data_row) > 1:  # Only add if there's more than just timestep
                     current_episode_data.append(data_row)
+        elif args_cli.save_biomechanics_data and episode_terminated_unsuccessfully:
+            # Debug: Print why data is not being saved
+            if timestep % 500 == 0:  # Print every 500 timesteps to avoid spam
+                print(f"[DEBUG] Timestep {timestep}: Not saving data because episode_terminated_unsuccessfully = True")
         # --- End Save biomechanics data ---
 
         # run everything in inference mode
@@ -412,6 +416,8 @@ def main():
         if episode_ended:
             print(f"[INFO] Resetting environment after episode termination at timestep {timestep}")
             current_obs, current_info = env.reset()
+            # Reset episode tracking for new episode
+            episode_terminated_unsuccessfully = False  # Reset failure flag for new episode
             # Reset distance tracking for new episode
             if args_cli.use_distance_termination:
                 initial_pelvis_x = None
@@ -443,6 +449,17 @@ def main():
                         if current_distance_from_origin >= args_cli.max_distance:
                             max_distance_reached = True
                             print(f"[INFO] Distance termination reached: {current_distance_from_origin:.2f}m >= {args_cli.max_distance}m")
+                            # Save current episode data as successful since distance goal was reached
+                            print(f"[DEBUG] Current episode data length: {len(current_episode_data)}")
+                            print(f"[DEBUG] Episode terminated unsuccessfully: {episode_terminated_unsuccessfully}")
+                            if current_episode_data:
+                                print(f"[INFO] Distance goal achieved! Saving {len(current_episode_data)} data points from successful episode.")
+                                biomechanics_data_to_save.extend(current_episode_data)
+                                print(f"[DEBUG] Total data points now in biomechanics_data_to_save: {len(biomechanics_data_to_save)}")
+                                current_episode_data = []
+                                episode_terminated_unsuccessfully = False
+                            else:
+                                print("[WARNING] Distance goal reached but no current episode data to save!")
                 else:
                     # Fallback: disable distance termination if robot data not accessible
                     if timestep == 1:  # Only print this once
@@ -480,6 +497,10 @@ def main():
 
     # --- Write biomechanics data to CSV ---
     if args_cli.save_biomechanics_data:
+        print(f"[DEBUG] Final check - current_episode_data length: {len(current_episode_data)}")
+        print(f"[DEBUG] Final check - episode_terminated_unsuccessfully: {episode_terminated_unsuccessfully}")
+        print(f"[DEBUG] Final check - biomechanics_data_to_save length: {len(biomechanics_data_to_save)}")
+        
         # Save any remaining successful episode data
         if current_episode_data and not episode_terminated_unsuccessfully:
             print(f"[INFO] Saving remaining {len(current_episode_data)} data points from ongoing successful episode.")
