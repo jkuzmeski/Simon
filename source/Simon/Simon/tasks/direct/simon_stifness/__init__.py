@@ -14,10 +14,10 @@ from . import agents
 
 gym.register(
     id="Simon-Half-Run-Biomech-Stiffness",
-    entry_point=f"{__name__}.simon_biomech_env:SimonBiomechStiffnessEnv",
+    entry_point=f"{__name__}.simon_biomech_stiffness_env:SimonBiomechStiffnessEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.simon_biomech_env_cfg:SimonBiomechStiffnessRunEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.simon_biomech_stiffness_env_cfg:SimonBiomechStiffnessRunEnvCfg",
         "skrl_cfg_entry_point": f"{agents.__name__}:simon_run_biomech_stiffness_cfg.yaml",
         "skrl_amp_cfg_entry_point": f"{agents.__name__}:simon_run_biomech_stiffness_cfg.yaml",
     },
@@ -25,10 +25,10 @@ gym.register(
 
 gym.register(
     id="Simon-Half-Walk-Biomech-Stiffness",
-    entry_point=f"{__name__}.simon_biomech_env:SimonBiomechStiffnessEnv",
+    entry_point=f"{__name__}.simon_biomech_stiffness_env:SimonBiomechStiffnessEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.simon_biomech_env_cfg:SimonBiomechStiffnessWalkEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.simon_biomech_stiffness_env_cfg:SimonBiomechStiffnessWalkEnvCfg",
         "skrl_cfg_entry_point": f"{agents.__name__}:simon_walk_stiffness_cfg.yaml",
         "skrl_amp_cfg_entry_point": f"{agents.__name__}:simon_walk_stiffness_cfg.yaml",
     },

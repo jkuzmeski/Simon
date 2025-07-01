@@ -65,11 +65,50 @@ class SimonBiomechStiffnessEnvCfg(DirectRLEnvCfg):
     robot: ArticulationCfg = simon_IMU.replace(prim_path="/World/envs/env_.*/Robot").replace(  # Changed to simon_half_CFG
         spawn=simon_IMU.spawn.replace(activate_contact_sensors=True),  # Add this line
         actuators={
-            "body": ImplicitActuatorCfg(
-                joint_names_expr=[".*"],
-                velocity_limit_sim=100.0,  # Changed from velocity_limit
-                stiffness=None,
-                damping=None,
+            # Hip joints - based on human muscle groups
+            "hip_x": ImplicitActuatorCfg(
+                joint_names_expr=[".*hip_x"],
+                velocity_limit_sim=100.0,
+                stiffness=120.0,  # Hip abduction/adduction (glute medius)
+                damping=12.0,
+            ),
+            "hip_y": ImplicitActuatorCfg(
+                joint_names_expr=[".*hip_y"],
+                velocity_limit_sim=100.0,
+                stiffness=180.0,  # Hip flexion/extension (strongest - glutes/hip flexors)
+                damping=18.0,
+            ),
+            "hip_z": ImplicitActuatorCfg(
+                joint_names_expr=[".*hip_z"],
+                velocity_limit_sim=100.0,
+                stiffness=100.0,  # Hip rotation (deep rotators)
+                damping=10.0,
+            ),
+            # Knee joints - quadriceps/hamstrings
+            "knee": ImplicitActuatorCfg(
+                joint_names_expr=[".*knee"],
+                velocity_limit_sim=100.0,
+                stiffness=150.0,  # Knee flexion/extension
+                damping=15.0,
+            ),
+            # Ankle joints - lower stiffness for natural compliance
+            "ankle_x": ImplicitActuatorCfg(
+                joint_names_expr=[".*ankle_x"],
+                velocity_limit_sim=100.0,
+                stiffness=60.0,  # Ankle dorsi/plantarflexion (calf muscles)
+                damping=6.0,
+            ),
+            "ankle_y": ImplicitActuatorCfg(
+                joint_names_expr=[".*ankle_y"],
+                velocity_limit_sim=100.0,
+                stiffness=40.0,  # Ankle inversion/eversion (peroneals)
+                damping=4.0,
+            ),
+            "ankle_z": ImplicitActuatorCfg(
+                joint_names_expr=[".*ankle_z"],
+                velocity_limit_sim=100.0,
+                stiffness=30.0,  # Ankle rotation (minimal natural stiffness)
+                damping=3.0,
             ),
         },
     )

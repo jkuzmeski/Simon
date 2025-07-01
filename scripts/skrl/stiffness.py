@@ -201,12 +201,12 @@ def main():
     biomechanics_csv_path = None
     episode_terminated_unsuccessfully = False  # Track if current episode failed
     if args_cli.save_biomechanics_data:
-        biomechanics_dir = os.path.join(log_dir, "biomechanics")
+        biomechanics_dir = os.path.join(log_dir, "stiffness")
         os.makedirs(biomechanics_dir, exist_ok=True)
         # Create a unique filename with a timestamp
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-        biomechanics_csv_path = os.path.join(biomechanics_dir, f"biomechanics_data_{timestamp_str}.csv")
-        print(f"[INFO] Saving biomechanics data to: {biomechanics_csv_path}")
+        biomechanics_csv_path = os.path.join(biomechanics_dir, f"stiffness_data_{timestamp_str}.csv")
+        print(f"[INFO] Saving stiffness data to: {biomechanics_csv_path}")
         print("[INFO] Only successful runs (not terminated due to failure) will be saved.")
     # --- End Biomechanics data saving setup ---
 
