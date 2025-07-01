@@ -98,12 +98,12 @@ class SimonBiomechEnv(DirectRLEnv):
             obs_index += 1
 
         # Root height (1 value)
-        print(f"\nRoot State:")
+        print("\nRoot State:")
         print(f"policy_obs_{obs_index}: root_height (Z position)")
         obs_index += 1
 
         # Quaternion to tangent and normal (6 values)
-        print(f"\nRoot Orientation (Tangent + Normal vectors):")
+        print("\nRoot Orientation (Tangent + Normal vectors):")
         print(f"policy_obs_{obs_index}: root_tangent_x")
         print(f"policy_obs_{obs_index+1}: root_tangent_y")
         print(f"policy_obs_{obs_index+2}: root_tangent_z")
@@ -113,14 +113,14 @@ class SimonBiomechEnv(DirectRLEnv):
         obs_index += 6
 
         # Root linear velocities (3 values)
-        print(f"\nRoot Linear Velocities:")
+        print("\nRoot Linear Velocities:")
         print(f"policy_obs_{obs_index}: root_lin_vel_x")
         print(f"policy_obs_{obs_index+1}: root_lin_vel_y")
         print(f"policy_obs_{obs_index+2}: root_lin_vel_z")
         obs_index += 3
 
         # Root angular velocities (3 values)
-        print(f"\nRoot Angular Velocities:")
+        print("\nRoot Angular Velocities:")
         print(f"policy_obs_{obs_index}: root_ang_vel_x")
         print(f"policy_obs_{obs_index+1}: root_ang_vel_y")
         print(f"policy_obs_{obs_index+2}: root_ang_vel_z")
@@ -128,7 +128,7 @@ class SimonBiomechEnv(DirectRLEnv):
 
         # Key body positions relative to root (9 values: 3 bodies × 3 coordinates)
         key_body_names = ["right_foot", "left_foot", "pelvis"]
-        print(f"\nKey Body Positions (relative to root):")
+        print("\nKey Body Positions (relative to root):")
         for body_name in key_body_names:
             print(f"policy_obs_{obs_index}: {body_name}_rel_x")
             print(f"policy_obs_{obs_index+1}: {body_name}_rel_y")
