@@ -38,7 +38,7 @@ class SimonBiomechEnv(DirectRLEnv):
             prim_path="/World/envs/env_.*/Robot/simon/left_foot",  # Verify this path exists
             update_period=0.001,
             history_length=5,
-            debug_vis=True,
+            debug_vis=False,
             # filter_prim_paths_expr=["/World/envs/env_.*/Robot/simon/left_foot/.*"],  # Filter for left foot contacts
         )
 
@@ -46,7 +46,7 @@ class SimonBiomechEnv(DirectRLEnv):
             prim_path="/World/envs/env_.*/Robot/simon/right_foot",  # Verify this path exists
             update_period=0.001,
             history_length=5,
-            debug_vis=True,
+            debug_vis=False,
         )
 
         super().__init__(cfg, render_mode, **kwargs)
@@ -177,6 +177,10 @@ class SimonBiomechEnv(DirectRLEnv):
         # combine all sensor data in extras
         self.extras = {
             "amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size),
+            "pelvis_position_global": self.robot.data.body_pos_w[:, self.ref_body_index].clone(),
+            "pelvis_orientation_global": self.robot.data.body_quat_w[:, self.ref_body_index].clone(),
+            "pelvis_linear_velocity_global": self.robot.data.body_lin_vel_w[:, self.ref_body_index].clone(),
+            "pelvis_angular_velocity_global": self.robot.data.body_ang_vel_w[:, self.ref_body_index].clone(),
             **imu_data,
             **left_contact_data,
             **right_contact_data,

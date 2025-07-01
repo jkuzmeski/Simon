@@ -49,8 +49,26 @@ parser.add_argument("--real-time", action="store_true", default=False, help="Run
 parser.add_argument(
     "--save_biomechanics_data",
     action="store_true",
-    default=False,
+    default=True,
     help="Save biomechanics data (observations and extras) to a CSV file in the log directory.",
+)
+parser.add_argument(
+    "--use_distance_termination",
+    action="store_true",
+    default=False,
+    help="Terminate simulation based on distance traveled rather than timesteps.",
+)
+parser.add_argument(
+    "--max_distance",
+    type=float,
+    default=100.0,
+    help="Maximum distance (in meters) the agent should travel from its starting position before terminating simulation when using distance termination.",
+)
+parser.add_argument(
+    "--max_timesteps_distance",
+    type=int,
+    default=10000,
+    help="Maximum timesteps to run when using distance termination (safety limit to prevent infinite runs).",
 )
 
 # append AppLauncher cli args
@@ -71,7 +89,6 @@ import os
 import time
 import torch
 import csv  # Add this import
-import numpy as np  # Add this import
 
 import skrl
 from packaging import version
@@ -180,7 +197,9 @@ def main():
 
     # --- Biomechanics data saving setup ---
     biomechanics_data_to_save = []
+    current_episode_data = []  # Temporary storage for current episode
     biomechanics_csv_path = None
+    episode_terminated_unsuccessfully = False  # Track if current episode failed
     if args_cli.save_biomechanics_data:
         biomechanics_dir = os.path.join(log_dir, "biomechanics")
         os.makedirs(biomechanics_dir, exist_ok=True)
@@ -188,17 +207,34 @@ def main():
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
         biomechanics_csv_path = os.path.join(biomechanics_dir, f"biomechanics_data_{timestamp_str}.csv")
         print(f"[INFO] Saving biomechanics data to: {biomechanics_csv_path}")
+        print("[INFO] Only successful runs (not terminated due to failure) will be saved.")
     # --- End Biomechanics data saving setup ---
 
     # reset environment
     current_obs, current_info = env.reset()  # Get initial obs and info
     timestep = 0
-    # simulate environment time step is less than 1000
-    while timestep < 1000:
+    
+    # --- Distance tracking setup ---
+    initial_pelvis_x = None
+    current_distance_from_origin = 0.0
+    max_distance_reached = False
+    
+    # We'll set the initial pelvis position after the first step, not from reset
+    if args_cli.use_distance_termination:
+        print(f"[INFO] Distance termination enabled. Will run until agent moves {args_cli.max_distance}m from origin.")
+        print("[INFO] Initial pelvis position will be captured after first simulation step.")
+        print(f"[INFO] Timestep limit set to {args_cli.max_timesteps_distance} for distance-based termination.")
+    else:
+        print("[INFO] Timestep termination enabled. Will run for up to 1000 timesteps.")
+    # --- End Distance tracking setup ---
+    
+    # simulate environment - terminate based on timesteps or distance
+    max_timesteps = 1000 if not args_cli.use_distance_termination else args_cli.max_timesteps_distance
+    while timestep < max_timesteps and not max_distance_reached:
         start_time = time.time()
 
         # --- Save biomechanics data for current_obs and current_info ---
-        if args_cli.save_biomechanics_data:
+        if args_cli.save_biomechanics_data and not episode_terminated_unsuccessfully:
             num_active_envs = 0
             # Determine number of active environments based on observation structure
             if isinstance(current_obs, dict) and "policy" in current_obs:
@@ -209,6 +245,21 @@ def main():
 
             for i in range(num_active_envs):
                 data_row = {"timestep": timestep}
+                
+                # Add distance from origin if available
+                if args_cli.use_distance_termination and initial_pelvis_x is not None:
+                    data_row["distance_from_origin"] = current_distance_from_origin
+                    # Also save current pelvis position for analysis
+                    try:
+                        unwrapped_env = env.unwrapped
+                        if hasattr(unwrapped_env, 'robot') and hasattr(unwrapped_env.robot, 'data'):
+                            pelvis_pos_3d = unwrapped_env.robot.data.body_pos_w[i, unwrapped_env.ref_body_index].cpu().numpy()
+                            data_row["pelvis_x"] = pelvis_pos_3d[0]
+                            data_row["pelvis_y"] = pelvis_pos_3d[1]
+                            data_row["pelvis_z"] = pelvis_pos_3d[2]
+                    except Exception:
+                        pass  # Skip if can't access robot data
+                
                 # Add policy observations
                 policy_obs_tensor = None
                 if isinstance(current_obs, dict) and "policy" in current_obs:
@@ -223,9 +274,11 @@ def main():
                 
                 # Add extras from current_info
                 if current_info and "extras" in current_info and current_info["extras"]:
-                    #print(f"DEBUG: extras keys: {list(current_info['extras'].keys())}")
+                    # Debug: Print available extras keys on first timestep
+                    if timestep == 0:
+                        print(f"[DEBUG] Available extras keys: {list(current_info['extras'].keys())}")
+                    
                     for key, tensor_val_all_envs in current_info["extras"].items():
-                        #print(f"DEBUG: key={key}, type={type(tensor_val_all_envs)}, value={tensor_val_all_envs}")
                         # Skip if the value is None
                         if tensor_val_all_envs is None:
                             continue
@@ -244,10 +297,11 @@ def main():
                                             data_row[f"{key}_{k_idx}"] = k_val
                         else:
                             # Handle non-tensor values (like nested dicts or other types)
-                            print(f"Timestep {timestep}")
+                            if timestep == 0:  # Only print debug info on first timestep
+                                print(f"[DEBUG] Non-tensor extra '{key}': type={type(tensor_val_all_envs)}")
                 
                 if len(data_row) > 1:  # Only add if there's more than just timestep
-                    biomechanics_data_to_save.append(data_row)
+                    current_episode_data.append(data_row)
         # --- End Save biomechanics data ---
 
         # run everything in inference mode
@@ -265,9 +319,141 @@ def main():
             # env stepping
             next_obs, rewards, terminated, truncated, next_info = env.step(actions)
         
+        # Check for episode termination
+        episode_ended = False
+        if hasattr(terminated, 'any'):  # Handle tensor/array termination signals
+            if terminated.any() or truncated.any():
+                episode_ended = True
+                # Check if termination was due to failure (e.g., height termination, falling, etc.)
+                # Check for failure indicators regardless of whether terminated or truncated
+                failure_detected = False
+                if next_info and "extras" in next_info and next_info["extras"]:
+                    # Debug: Print available extras when episode ends
+                    print(f"[DEBUG] Episode ended. Available extras: {list(next_info['extras'].keys())}")
+                    
+                    # Common failure indicators in Isaac Lab environments
+                    failure_keys = ["height_termination", "body_height", "fallen", "failure", "terminate"]
+                    for failure_key in failure_keys:
+                        if failure_key in next_info["extras"]:
+                            failure_tensor = next_info["extras"][failure_key]
+                            print(f"[DEBUG] Checking {failure_key}: {failure_tensor}")
+                            if hasattr(failure_tensor, 'any') and failure_tensor.any():
+                                failure_detected = True
+                                print(f"[INFO] Episode terminated due to failure ({failure_key}). Data will not be saved.")
+                                break
+                            elif hasattr(failure_tensor, 'item') and failure_tensor.item():
+                                failure_detected = True
+                                print(f"[INFO] Episode terminated due to failure ({failure_key}). Data will not be saved.")
+                                break
+                
+                # Additional check: if episode ended very early (< 100 timesteps), likely a failure
+                # unless we're in distance mode and reached the target
+                if not failure_detected:
+                    episode_length = len(current_episode_data)
+                    if episode_length < 100 and not (args_cli.use_distance_termination and max_distance_reached):
+                        failure_detected = True
+                        print(f"[INFO] Episode ended early ({episode_length} timesteps), treating as failure. Data will not be saved.")
+                
+                if failure_detected:
+                    episode_terminated_unsuccessfully = True
+                    # Clear current episode data as it's not successful
+                    current_episode_data = []
+                else:
+                    # Successful termination (e.g., time limit reached, distance goal achieved)
+                    print(f"[INFO] Episode completed successfully. Saving {len(current_episode_data)} data points.")
+                    biomechanics_data_to_save.extend(current_episode_data)
+                    current_episode_data = []
+                    episode_terminated_unsuccessfully = False
+        elif isinstance(terminated, bool):  # Handle single boolean termination
+            if terminated or truncated:
+                episode_ended = True
+                # Check for failure indicators regardless of termination type
+                failure_detected = False
+                if next_info and "extras" in next_info and next_info["extras"]:
+                    # Debug: Print available extras when episode ends
+                    print(f"[DEBUG] Episode ended (single env). Available extras: {list(next_info['extras'].keys())}")
+                    
+                    failure_keys = ["height_termination", "body_height", "fallen", "failure", "terminate"]
+                    for failure_key in failure_keys:
+                        if failure_key in next_info["extras"]:
+                            failure_tensor = next_info["extras"][failure_key]
+                            print(f"[DEBUG] Checking {failure_key}: {failure_tensor}")
+                            if hasattr(failure_tensor, 'item'):
+                                if failure_tensor.item():
+                                    failure_detected = True
+                                    print(f"[INFO] Episode terminated due to failure ({failure_key}). Data will not be saved.")
+                                    break
+                            elif hasattr(failure_tensor, 'any') and failure_tensor.any():
+                                failure_detected = True
+                                print(f"[INFO] Episode terminated due to failure ({failure_key}). Data will not be saved.")
+                                break
+                
+                # Additional check: if episode ended very early (< 100 timesteps), likely a failure
+                if not failure_detected:
+                    episode_length = len(current_episode_data)
+                    if episode_length < 100 and not (args_cli.use_distance_termination and max_distance_reached):
+                        failure_detected = True
+                        print(f"[INFO] Episode ended early ({episode_length} timesteps), treating as failure. Data will not be saved.")
+                
+                if failure_detected:
+                    episode_terminated_unsuccessfully = True
+                    current_episode_data = []
+                else:
+                    print(f"[INFO] Episode completed successfully. Saving {len(current_episode_data)} data points.")
+                    biomechanics_data_to_save.extend(current_episode_data)
+                    current_episode_data = []
+                    episode_terminated_unsuccessfully = False
+        
         # Update obs and info for the next iteration
         current_obs = next_obs
         current_info = next_info
+        
+        # Handle environment reset if episode ended
+        if episode_ended:
+            print(f"[INFO] Resetting environment after episode termination at timestep {timestep}")
+            current_obs, current_info = env.reset()
+            # Reset distance tracking for new episode
+            if args_cli.use_distance_termination:
+                initial_pelvis_x = None
+                current_distance_from_origin = 0.0
+
+        # --- Check distance from origin if using distance termination ---
+        if args_cli.use_distance_termination:
+            # Access pelvis position directly from the environment's robot data
+            try:
+                # Get the unwrapped environment to access robot data
+                unwrapped_env = env.unwrapped
+                if hasattr(unwrapped_env, 'robot') and hasattr(unwrapped_env.robot, 'data'):
+                    # Get pelvis position (3D: x, y, z) for first environment
+                    pelvis_pos_3d = unwrapped_env.robot.data.body_pos_w[0, unwrapped_env.ref_body_index].cpu().numpy()
+                    current_pelvis_x = pelvis_pos_3d[0]  # Extract X coordinate
+                    
+                    # Set initial position after first step (timestep 1)
+                    if initial_pelvis_x is None and timestep >= 1:
+                        initial_pelvis_x = current_pelvis_x
+                        print(f"[INFO] Initial pelvis X position captured: {initial_pelvis_x:.3f}m")
+                    
+                    # Calculate distance from initial position
+                    if initial_pelvis_x is not None:
+                        current_distance_from_origin = abs(current_pelvis_x - initial_pelvis_x)
+                        
+                        if timestep % 100 == 0:  # Print every 100 timesteps
+                            print(f"[INFO] Timestep {timestep}: Distance from start: {current_distance_from_origin:.2f}m (X: {current_pelvis_x:.3f}m)")
+                        
+                        if current_distance_from_origin >= args_cli.max_distance:
+                            max_distance_reached = True
+                            print(f"[INFO] Distance termination reached: {current_distance_from_origin:.2f}m >= {args_cli.max_distance}m")
+                else:
+                    # Fallback: disable distance termination if robot data not accessible
+                    if timestep == 1:  # Only print this once
+                        print("[WARNING] Cannot access robot data. Distance termination disabled.")
+                        args_cli.use_distance_termination = False
+            except Exception as e:
+                # Fallback: disable distance termination on any error
+                if timestep == 1:  # Only print this once
+                    print(f"[WARNING] Error accessing robot data: {e}. Distance termination disabled.")
+                    args_cli.use_distance_termination = False
+        # --- End distance checking ---
 
         if args_cli.video:
             # exit the play loop after recording one video
@@ -281,25 +467,45 @@ def main():
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
 
-    # --- Write biomechanics data to CSV ---
-    if args_cli.save_biomechanics_data and biomechanics_data_to_save:
-        if biomechanics_csv_path:
-            fieldnames = []
-            if biomechanics_data_to_save:
-                all_keys = set()
-                for row in biomechanics_data_to_save:
-                    all_keys.update(row.keys())
-                # Ensure timestep is first
-                if "timestep" in all_keys:
-                    fieldnames = ["timestep"] + sorted([k for k in all_keys if k != "timestep"])
-                else:
-                    fieldnames = sorted(list(all_keys))  # Should ideally not happen if timestep is always added
+    # --- Final distance report ---
+    if args_cli.use_distance_termination and initial_pelvis_x is not None:
+        print(f"[INFO] Simulation ended. Final distance from start: {current_distance_from_origin:.2f}m after {timestep} timesteps")
+        if max_distance_reached:
+            print(f"[INFO] Distance target of {args_cli.max_distance}m was reached!")
+        else:
+            print(f"[INFO] Simulation ended before reaching distance target of {args_cli.max_distance}m")
+    else:
+        print(f"[INFO] Simulation ended after {timestep} timesteps")
+    # --- End final distance report ---
 
-            with open(biomechanics_csv_path, "w", newline="") as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(biomechanics_data_to_save)
-            print(f"[INFO] Biomechanics data saved to {biomechanics_csv_path}")
+    # --- Write biomechanics data to CSV ---
+    if args_cli.save_biomechanics_data:
+        # Save any remaining successful episode data
+        if current_episode_data and not episode_terminated_unsuccessfully:
+            print(f"[INFO] Saving remaining {len(current_episode_data)} data points from ongoing successful episode.")
+            biomechanics_data_to_save.extend(current_episode_data)
+        
+        if biomechanics_data_to_save:
+            if biomechanics_csv_path:
+                fieldnames = []
+                if biomechanics_data_to_save:
+                    all_keys = set()
+                    for row in biomechanics_data_to_save:
+                        all_keys.update(row.keys())
+                    # Ensure timestep is first
+                    if "timestep" in all_keys:
+                        fieldnames = ["timestep"] + sorted([k for k in all_keys if k != "timestep"])
+                    else:
+                        fieldnames = sorted(list(all_keys))  # Should ideally not happen if timestep is always added
+
+                with open(biomechanics_csv_path, "w", newline="") as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(biomechanics_data_to_save)
+                print(f"[INFO] Biomechanics data saved to {biomechanics_csv_path}")
+                print(f"[INFO] Total successful data points saved: {len(biomechanics_data_to_save)}")
+        else:
+            print("[INFO] No successful episode data to save.")
     # --- End Write biomechanics data to CSV ---
 
     # close the simulator

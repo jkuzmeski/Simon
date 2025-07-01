@@ -83,6 +83,23 @@ obs = {
     'net_force_right_foot_0': 'net_force_right_foot_x',
     'net_force_right_foot_1': 'net_force_right_foot_y',
     'net_force_right_foot_2': 'net_force_right_foot_z',
+    'pelvis_angular_velocity_global_0': 'pelvis_angular_velocity_global_x',
+    'pelvis_angular_velocity_global_1': 'pelvis_angular_velocity_global_y',
+    'pelvis_angular_velocity_global_2': 'pelvis_angular_velocity_global_z',
+    'pelvis_linear_velocity_global_0': 'pelvis_linear_velocity_global_x',
+    'pelvis_linear_velocity_global_1': 'pelvis_linear_velocity_global_y',
+    'pelvis_linear_velocity_global_2': 'pelvis_linear_velocity_global_z',
+    'pelvis_orientation_global_0': 'pelvis_orientation_global_x',
+    'pelvis_orientation_global_1': 'pelvis_orientation_global_y',
+    'pelvis_orientation_global_2': 'pelvis_orientation_global_z',
+    'pelvis_orientation_global_3': 'pelvis_orientation_global_w',
+    'pelvis_position_global_0': 'pelvis_position_global_x',
+    'pelvis_position_global_1': 'pelvis_position_global_y',
+    'pelvis_position_global_2': 'pelvis_position_global_z',
+    'distance_from_origin': 'distance_from_origin',
+    'pelvis_x': 'pelvis_x',
+    'pelvis_y': 'pelvis_y',
+    'pelvis_z': 'pelvis_z'
 }
 
 
@@ -113,16 +130,23 @@ def preprocess_data(log_folder, obs=obs):
     # # Map the variable names to their corresponding indices
     all_data = all_data.rename(columns=obs)
     # # get rid of the columns that are not in the obs dict
-    #missing_columns = [col for col in all_data.columns if col not in obs.values()]
+    # missing_columns = [col for col in all_data.columns if col not in obs.values()]
     # print(missing_columns)
     print(all_data.columns)
 
     return all_data
 
 
-def stride_segmentation(data, stride_length=100):
-    '''Segment the data into strides based on the right foot height.
-    if the right foot height is decsends below a threshold, it is considered the beginning of a new stride.'''
+def stride_segmentation(data):
+    '''Segment the data into strides based on the right foot contacts.'''
+
+    #find the indices where the right foot contacts are made
+    right_foot_contacts = data[data['net_force_right_foot_z'] > 10].index.tolist()
+    segments = []
+    for i in range(0, len(right_foot_contacts), stride_length):
+        segment = data.iloc[right_foot_contacts[i:i + stride_length]]
+        if not segment.empty:
+            segments.append(segment)
 
 
 def plot_results(all_data, variables):
