@@ -21,12 +21,12 @@ MOTIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "motions"
 
 
 @configclass
-class SimonBiomechEnvCfg(DirectRLEnvCfg):
+class SimonBiomechStiffnessEnvCfg(DirectRLEnvCfg):
     """Humanoid AMP environment config (base class)."""
 
     # env
     episode_length_s = 10000
-    decimation = 1
+    decimation = 8
 
     # spaces
     observation_space = 50  # 14 DOF pos + 14 DOF vel + 1 root height + 6 tangent/normal + 3 lin vel + 3 ang vel + 9 key body pos = 50
@@ -50,7 +50,7 @@ class SimonBiomechEnvCfg(DirectRLEnvCfg):
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 60,
+        dt=1 / 480,
         render_interval=decimation,
         physx=PhysxCfg(
             gpu_found_lost_pairs_capacity=2**21,
@@ -76,10 +76,10 @@ class SimonBiomechEnvCfg(DirectRLEnvCfg):
 
 
 @configclass
-class SimonBiomechRunEnvCfg(SimonBiomechEnvCfg):
+class SimonBiomechStiffnessRunEnvCfg(SimonBiomechStiffnessEnvCfg):
     motion_file = os.path.join(MOTIONS_DIR, "humanoid_half_run.npz")
 
 
 @configclass
-class SimonBiomechWalkEnvCfg(SimonBiomechEnvCfg):
+class SimonBiomechStiffnessWalkEnvCfg(SimonBiomechStiffnessEnvCfg):
     motion_file = os.path.join(MOTIONS_DIR, "humanoid_walk.npz")
