@@ -61,13 +61,13 @@ parser.add_argument(
 parser.add_argument(
     "--max_distance",
     type=float,
-    default=100.0,
+    default=1000.0,
     help="Maximum distance (in meters) the agent should travel from its starting position before terminating simulation when using distance termination.",
 )
 parser.add_argument(
     "--max_timesteps_distance",
     type=int,
-    default=10000,
+    default=100000,
     help="Maximum timesteps to run when using distance termination (safety limit to prevent infinite runs).",
 )
 

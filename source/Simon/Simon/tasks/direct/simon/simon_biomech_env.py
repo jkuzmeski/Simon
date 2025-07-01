@@ -75,6 +75,69 @@ class SimonBiomechEnv(DirectRLEnv):
             (self.num_envs, self.cfg.num_amp_observations, self.cfg.amp_observation_space), device=self.device
         )
 
+        # Debug information
+        print("=== JOINT ORDER DEBUG ===")
+        print(f"Robot joint names: {self.robot.data.joint_names}")
+        print(f"Motion DOF indexes: {self.motion_dof_indexes}")
+        print(f"Motion DOF names: {self._motion_loader.dof_names}")
+
+        # Print the complete observation mapping
+        print("\n=== COMPLETE OBSERVATION MAPPING ===")
+        obs_index = 0
+
+        # Joint positions (14 values)
+        print("Joint Positions:")
+        for i, joint_name in enumerate(self.robot.data.joint_names):
+            print(f"policy_obs_{obs_index}: {joint_name} (position)")
+            obs_index += 1
+
+        # Joint velocities (14 values)
+        print("\nJoint Velocities:")
+        for i, joint_name in enumerate(self.robot.data.joint_names):
+            print(f"policy_obs_{obs_index}: {joint_name} (velocity)")
+            obs_index += 1
+
+        # Root height (1 value)
+        print(f"\nRoot State:")
+        print(f"policy_obs_{obs_index}: root_height (Z position)")
+        obs_index += 1
+
+        # Quaternion to tangent and normal (6 values)
+        print(f"\nRoot Orientation (Tangent + Normal vectors):")
+        print(f"policy_obs_{obs_index}: root_tangent_x")
+        print(f"policy_obs_{obs_index+1}: root_tangent_y")
+        print(f"policy_obs_{obs_index+2}: root_tangent_z")
+        print(f"policy_obs_{obs_index+3}: root_normal_x")
+        print(f"policy_obs_{obs_index+4}: root_normal_y")
+        print(f"policy_obs_{obs_index+5}: root_normal_z")
+        obs_index += 6
+
+        # Root linear velocities (3 values)
+        print(f"\nRoot Linear Velocities:")
+        print(f"policy_obs_{obs_index}: root_lin_vel_x")
+        print(f"policy_obs_{obs_index+1}: root_lin_vel_y")
+        print(f"policy_obs_{obs_index+2}: root_lin_vel_z")
+        obs_index += 3
+
+        # Root angular velocities (3 values)
+        print(f"\nRoot Angular Velocities:")
+        print(f"policy_obs_{obs_index}: root_ang_vel_x")
+        print(f"policy_obs_{obs_index+1}: root_ang_vel_y")
+        print(f"policy_obs_{obs_index+2}: root_ang_vel_z")
+        obs_index += 3
+
+        # Key body positions relative to root (9 values: 3 bodies × 3 coordinates)
+        key_body_names = ["right_foot", "left_foot", "pelvis"]
+        print(f"\nKey Body Positions (relative to root):")
+        for body_name in key_body_names:
+            print(f"policy_obs_{obs_index}: {body_name}_rel_x")
+            print(f"policy_obs_{obs_index+1}: {body_name}_rel_y")
+            print(f"policy_obs_{obs_index+2}: {body_name}_rel_z")
+            obs_index += 3
+
+        print(f"\nTotal observation size: {obs_index}")
+        print("=" * 50)
+
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
         # add ground plane
