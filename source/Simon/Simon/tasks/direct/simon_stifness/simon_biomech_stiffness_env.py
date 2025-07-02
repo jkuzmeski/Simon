@@ -50,11 +50,12 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
 
         super().__init__(cfg, render_mode, **kwargs)
 
-        # action offset and scale
-        dof_lower_limits = self.robot.data.soft_joint_pos_limits[0, :, 0]
-        dof_upper_limits = self.robot.data.soft_joint_pos_limits[0, :, 1]
-        self.action_offset = 0.25 * (dof_upper_limits + dof_lower_limits)
-        self.action_scale = dof_upper_limits - dof_lower_limits
+        # For torque control, we don't need position-based action scaling
+        # Actions will be directly interpreted as normalized torque values (-1 to 1)
+        # The actual torque scaling happens in _apply_action()
+        
+        # Optional: Initialize person-specific parameters
+        self.person_params = getattr(cfg, 'person_params', None)
 
         # load motion
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
@@ -185,8 +186,11 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
         self.actions = actions.clone()
 
     def _apply_action(self):
-        target = self.action_offset + self.action_scale * self.actions
-        self.robot.set_joint_position_target(target)
+        # For torque control, actions represent desired joint torques
+        # Scale actions to reasonable torque ranges (adjust these limits based on your robot)
+        max_torque = 1500.0  # Adjust based on your humanoid's torque limits
+        target_torques = max_torque * torch.tanh(self.actions)  # Use tanh to bound torques
+        self.robot.set_joint_effort_target(target_torques)
 
     def _get_observations(self) -> dict:
         # build task observation

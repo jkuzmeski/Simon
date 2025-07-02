@@ -195,7 +195,7 @@ def find_heel_strikes(data, threshold=10.0):
             left_force[i-1] <= threshold and 
             left_force[i] > left_force[i-1]):
             # Check if enough time has passed since last heel strike (minimum 25 timesteps)
-            if not heel_strikes['left_foot'] or i - heel_strikes['left_foot'][-1] > 25:
+            if not heel_strikes['left_foot'] or i - heel_strikes['left_foot'][-1] > 250:
                 heel_strikes['left_foot'].append(i)
     
     # Find heel strikes for right foot
@@ -206,7 +206,7 @@ def find_heel_strikes(data, threshold=10.0):
             right_force[i-1] <= threshold and 
             right_force[i] > right_force[i-1]):
             # Check if enough time has passed since last heel strike (minimum 25 timesteps)
-            if not heel_strikes['right_foot'] or i - heel_strikes['right_foot'][-1] > 25:
+            if not heel_strikes['right_foot'] or i - heel_strikes['right_foot'][-1] > 250:
                 heel_strikes['right_foot'].append(i)
     
     print(f"Found {len(heel_strikes['left_foot'])} left heel strikes")
@@ -263,10 +263,19 @@ def chop_data_by_gait_cycles(data, heel_strikes, foot='right_foot'):
     return gait_cycles
 
 
-def plot_results(all_data, variables):
+def plot_results(all_data, variables, heel_strikes=None):
     """
     Plots each variable from the DataFrame.
     The DataFrame index is used as the x-axis.
+    
+    Parameters:
+    -----------
+    all_data : pd.DataFrame
+        DataFrame containing the time series data
+    variables : list
+        List of variable names to plot
+    heel_strikes : dict, optional
+        Dictionary containing heel strike indices for left and right feet
     """
     # The error "KeyError: 'time_step'" suggests 'time_step' is not a column.
     # It is likely the index of your DataFrame.
@@ -275,9 +284,24 @@ def plot_results(all_data, variables):
 
     for var in variables:
         if var in all_data.columns:
-            plt.figure(figsize=(10, 6))
+            plt.figure(figsize=(12, 8))
             # pandas' .plot() method uses the DataFrame index for the x-axis by default.
             all_data[var].plot(grid=True)
+            
+            # Add heel strike markers if provided
+            if heel_strikes:
+                # Add vertical lines for left foot heel strikes
+                for strike in heel_strikes.get('left_foot', []):
+                    plt.axvline(x=strike, color='red', linestyle='-', alpha=0.7, linewidth=1, label='Left heel strike' if strike == heel_strikes['left_foot'][0] else "")
+                
+                # Add vertical lines for right foot heel strikes
+                for strike in heel_strikes.get('right_foot', []):
+                    plt.axvline(x=strike, color='blue', linestyle='-', alpha=0.7, linewidth=1, label='Right heel strike' if strike == heel_strikes['right_foot'][0] else "")
+                
+                # Add legend if heel strikes are present
+                if heel_strikes.get('left_foot') or heel_strikes.get('right_foot'):
+                    plt.legend()
+            
             plt.title(f'{var} over Time')
             plt.xlabel("Time Step")
             plt.ylabel(var)
@@ -386,10 +410,10 @@ def plot_average_gait_cycle(gait_cycles, variables, foot='right_foot'):
         plt.plot(x_percent, mean_cycle, 'b-', linewidth=2, label='Mean')
         
         # Plot standard deviation shading
-        plt.fill_between(x_percent, 
-                        mean_cycle - std_cycle, 
-                        mean_cycle + std_cycle, 
-                        alpha=0.3, color='blue', label='±1 SD')
+        plt.fill_between(x_percent,
+                         mean_cycle - std_cycle,
+                         mean_cycle + std_cycle,
+                         alpha=0.3, color='blue', label='±1 SD')
         
         plt.title(f'Average {var} across {foot} gait cycles (n={len(gait_cycles)})')
         plt.xlabel('Gait Cycle (%)')
@@ -420,7 +444,7 @@ def main():
     cycles = chop_data_by_gait_cycles(all_data, heelstrikes, foot='right_foot')  # Chop data into gait cycles
     plot_gait_cycles(cycles, variables, foot='right_foot', overlay=True)  # Plot gait cycles
     plot_average_gait_cycle(cycles, variables, foot='right_foot')  # Plot average gait cycle with std
-    plot_results(all_data, variables)
+    plot_results(all_data, variables, heel_strikes=heelstrikes)  # Pass heel strikes to plotting function
 
 if __name__ == "__main__":
     main()

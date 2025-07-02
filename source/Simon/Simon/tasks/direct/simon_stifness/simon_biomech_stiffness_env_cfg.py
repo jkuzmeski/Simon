@@ -25,7 +25,7 @@ class SimonBiomechStiffnessEnvCfg(DirectRLEnvCfg):
     """Humanoid AMP environment config (base class)."""
 
     # env
-    episode_length_s = 10000
+    episode_length_s = 10
     decimation = 1
 
     # spaces
