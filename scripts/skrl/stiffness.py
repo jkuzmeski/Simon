@@ -61,7 +61,7 @@ parser.add_argument(
 parser.add_argument(
     "--max_distance",
     type=float,
-    default=1000.0,
+    default=100.0,
     help="Maximum distance (in meters) the agent should travel from its starting position before terminating simulation when using distance termination.",
 )
 parser.add_argument(
@@ -219,6 +219,7 @@ def main():
     current_distance_from_origin = 0.0
     max_distance_reached = False
     initial_knee_stiffness = None
+    initial_knee_damping = None
     knee_joint_ids = []
     
     # We'll set the initial pelvis position after the first step, not from reset
@@ -397,7 +398,7 @@ def main():
                 # Additional check: if episode ended very early (< 100 timesteps), likely a failure
                 if not failure_detected:
                     episode_length = len(current_episode_data)
-                    if episode_length < 100 and not (args_cli.use_distance_termination and max_distance_reached):
+                    if episode_length < 1000 and not (args_cli.use_distance_termination and max_distance_reached):
                         failure_detected = True
                         print(f"[INFO] Episode ended early ({episode_length} timesteps), treating as failure. Data will not be saved.")
                 
@@ -443,18 +444,30 @@ def main():
                                 knee_joint_ids.append(robot_joint_names.index(name))
                         
                         if knee_joint_ids:
-                            # Store the initial stiffness for the knee joints
+                            # Store the initial stiffness and damping for the knee joints
                             initial_knee_stiffness = robot.data.joint_stiffness[0, knee_joint_ids].clone()
+                            initial_knee_damping = robot.data.joint_damping[0, knee_joint_ids].clone()
                             print(f"[INFO] Found knee joints at indices: {knee_joint_ids}")
                             print(f"[INFO] Initial knee stiffness: {initial_knee_stiffness.cpu().numpy()}")
+                            print(f"[INFO] Initial knee damping: {initial_knee_damping.cpu().numpy()}")
                             
                             # Check if initial stiffness is zero and set a default value
-                            if torch.all(initial_knee_stiffness == 0):
+                            stiffness_was_zero = torch.all(initial_knee_stiffness == 0)
+                            damping_was_zero = torch.all(initial_knee_damping == 0)
+                            
+                            if stiffness_was_zero:
                                 default_stiffness_value = 50.0
                                 print(f"[WARNING] Initial knee stiffness was 0. Setting to a default of {default_stiffness_value}.")
                                 initial_knee_stiffness = torch.full_like(initial_knee_stiffness, default_stiffness_value)
-                                # Also apply this default stiffness to the simulation immediately
+                                # Apply this default stiffness to the simulation immediately
                                 unwrapped_env.robot.write_joint_stiffness_to_sim(initial_knee_stiffness, joint_ids=knee_joint_ids)
+                            
+                            if damping_was_zero:
+                                default_damping_value = 5.0  # Typical damping is usually lower than stiffness
+                                print(f"[WARNING] Initial knee damping was 0. Setting to a default of {default_damping_value}.")
+                                initial_knee_damping = torch.full_like(initial_knee_damping, default_damping_value)
+                                # Apply this default damping to the simulation immediately
+                                unwrapped_env.robot.write_joint_damping_to_sim(initial_knee_damping, joint_ids=knee_joint_ids)
 
                         else:
                             print("[WARNING] Could not find knee joints. Stiffness will not be adjusted.")
@@ -472,23 +485,22 @@ def main():
                     if initial_pelvis_x is not None:
                         current_distance_from_origin = abs(current_pelvis_x - initial_pelvis_x)
                         
-                        # Dynamically adjust knee stiffness
-                        if initial_knee_stiffness is not None and knee_joint_ids:
-                            # Calculate stiffness increase factor (0% to 50% over max_distance)
-                            stiffness_increase_factor = 1.0 + (current_distance_from_origin / args_cli.max_distance) * 0.5
-                            # Clamp the factor to a max of 1.2 to avoid exceeding the target
-                            stiffness_increase_factor = min(stiffness_increase_factor, 1.5)
+                        # Dynamically adjust knee stiffness and damping
+                        if initial_knee_stiffness is not None and initial_knee_damping is not None and knee_joint_ids:
+                            # Calculate increase factor (0% to 150% over max_distance)
+                            increase_factor = 1.0 + (current_distance_from_origin / args_cli.max_distance) * 5.0
+                            # Clamp the factor to a max of 2.5 to avoid exceeding reasonable limits
+                            increase_factor = min(increase_factor, 6.0)
                             
-                            new_stiffness = initial_knee_stiffness * stiffness_increase_factor
+                            new_stiffness = initial_knee_stiffness * increase_factor
+                            new_damping = initial_knee_damping * increase_factor
                             
-                            # Apply the new stiffness to the simulation for the knee joints
+                            # Apply the new stiffness and damping to the simulation for the knee joints
                             unwrapped_env.robot.write_joint_stiffness_to_sim(new_stiffness, joint_ids=knee_joint_ids)
+                            unwrapped_env.robot.write_joint_damping_to_sim(new_damping, joint_ids=knee_joint_ids)
 
                             if timestep % 100 == 0:  # Print every 100 timesteps
-                                print(f"[INFO] Timestep {timestep}: Distance: {current_distance_from_origin:.2f}m | Current Knee Stiffness: {new_stiffness.cpu().numpy()}")
-
-                        if timestep % 100 == 0:  # Print every 100 timesteps
-                            print(f"[INFO] Timestep {timestep}: Distance from start: {current_distance_from_origin:.2f}m (X: {current_pelvis_x:.3f}m)")
+                                print(f"[INFO] Timestep {timestep}: Distance: {current_distance_from_origin:.2f}m | Knee Stiffness: {new_stiffness.cpu().numpy()} | Knee Damping: {new_damping.cpu().numpy()}")
                         
                         if current_distance_from_origin >= args_cli.max_distance:
                             max_distance_reached = True

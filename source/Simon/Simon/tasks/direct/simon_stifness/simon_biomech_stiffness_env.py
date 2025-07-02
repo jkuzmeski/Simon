@@ -28,24 +28,23 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
         # create IMU sensor configuration
         self.imu_cfg = ImuCfg(
             prim_path="/World/envs/env_.*/Robot/simon/pelvis",
-            update_period=0.001,
-            history_length=5,
+            update_period=0.0,
+            # history_length=8,
             debug_vis=True,
         )
 
         # create contact sensor configurations for feet
         self.left_foot_contact_cfg = ContactSensorCfg(
             prim_path="/World/envs/env_.*/Robot/simon/left_foot",  # Verify this path exists
-            update_period=0.001,
-            history_length=5,
+            update_period=0.0,
+            # history_length=8,
             debug_vis=False,
-            # filter_prim_paths_expr=["/World/envs/env_.*/Robot/simon/left_foot/.*"],  # Filter for left foot contacts
         )
 
         self.right_foot_contact_cfg = ContactSensorCfg(
             prim_path="/World/envs/env_.*/Robot/simon/right_foot",  # Verify this path exists
-            update_period=0.001,
-            history_length=5,
+            update_period=0.0,
+            # history_length=8,
             debug_vis=False,
         )
 

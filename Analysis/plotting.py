@@ -281,7 +281,6 @@ def plot_results(all_data, variables):
             plt.title(f'{var} over Time')
             plt.xlabel("Time Step")
             plt.ylabel(var)
-            plt.legend()
         else:
             print(f"Warning: Variable '{var}' not found in data. Skipping plot.")
 
@@ -321,7 +320,6 @@ def plot_gait_cycles(gait_cycles, variables, foot='right_foot', overlay=True):
             for i, cycle in enumerate(gait_cycles):
                 cycle[var].plot(alpha=0.7, label=f'Cycle {i+1}', grid=True)
             plt.title(f'{var} across {foot} gait cycles (Overlaid)')
-            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         else:
             # Plot cycles in subplots
             n_cycles = len(gait_cycles)
@@ -396,7 +394,6 @@ def plot_average_gait_cycle(gait_cycles, variables, foot='right_foot'):
         plt.title(f'Average {var} across {foot} gait cycles (n={len(gait_cycles)})')
         plt.xlabel('Gait Cycle (%)')
         plt.ylabel(var)
-        plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
     

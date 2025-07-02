@@ -26,7 +26,7 @@ class SimonBiomechStiffnessEnvCfg(DirectRLEnvCfg):
 
     # env
     episode_length_s = 10000
-    decimation = 8
+    decimation = 1
 
     # spaces
     observation_space = 50  # 14 DOF pos + 14 DOF vel + 1 root height + 6 tangent/normal + 3 lin vel + 3 ang vel + 9 key body pos = 50
