@@ -25,7 +25,7 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
     cfg: SimonBiomechStiffnessEnvCfg
 
     def __init__(self, cfg: SimonBiomechStiffnessEnvCfg, render_mode: str | None = None, **kwargs):
-        # create IMU sensor configuration
+        # create sensor configurations first
         self.imu_cfg = ImuCfg(
             prim_path="/World/envs/env_.*/Robot/simon/pelvis",
             update_period=0.0,
@@ -48,14 +48,20 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
             debug_vis=False,
         )
 
+        # call the parent constructor. This will call _setup_scene() internally
+        # and create the self.robot.actuators dictionary.
         super().__init__(cfg, render_mode, **kwargs)
 
-        # For torque control, we don't need position-based action scaling
-        # Actions will be directly interpreted as normalized torque values (-1 to 1)
-        # The actual torque scaling happens in _apply_action()
-        
-        # Optional: Initialize person-specific parameters
-        self.person_params = getattr(cfg, 'person_params', None)
+        # -- FIX: Now that super().__init__() is done, self.robot.actuators exists. --
+        # Iterate through the configured actuators and write their properties to the sim.
+        for actuator in self.robot.actuators.values():
+            if hasattr(actuator, "stiffness"):
+                self.robot.write_joint_stiffness_to_sim(actuator.stiffness)
+            if hasattr(actuator, "damping"):
+                self.robot.write_joint_damping_to_sim(actuator.damping)
+
+        # (Optional) Add a debug print here to confirm the values are now set
+        print(f"[INFO] Joint stiffness after writing to sim: {self.robot.data.joint_stiffness[0]}")
 
         # load motion
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
@@ -81,64 +87,8 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
         print(f"Motion DOF indexes: {self.motion_dof_indexes}")
         print(f"Motion DOF names: {self._motion_loader.dof_names}")
 
-        # Print the complete observation mapping
-        print("\n=== COMPLETE OBSERVATION MAPPING ===")
-        obs_index = 0
-
-        # Joint positions (14 values)
-        print("Joint Positions:")
-        for i, joint_name in enumerate(self.robot.data.joint_names):
-            print(f"policy_obs_{obs_index}: {joint_name} (position)")
-            obs_index += 1
-
-        # Joint velocities (14 values)
-        print("\nJoint Velocities:")
-        for i, joint_name in enumerate(self.robot.data.joint_names):
-            print(f"policy_obs_{obs_index}: {joint_name} (velocity)")
-            obs_index += 1
-
-        # Root height (1 value)
-        print("\nRoot State:")
-        print(f"policy_obs_{obs_index}: root_height (Z position)")
-        obs_index += 1
-
-        # Quaternion to tangent and normal (6 values)
-        print("\nRoot Orientation (Tangent + Normal vectors):")
-        print(f"policy_obs_{obs_index}: root_tangent_x")
-        print(f"policy_obs_{obs_index+1}: root_tangent_y")
-        print(f"policy_obs_{obs_index+2}: root_tangent_z")
-        print(f"policy_obs_{obs_index+3}: root_normal_x")
-        print(f"policy_obs_{obs_index+4}: root_normal_y")
-        print(f"policy_obs_{obs_index+5}: root_normal_z")
-        obs_index += 6
-
-        # Root linear velocities (3 values)
-        print("\nRoot Linear Velocities:")
-        print(f"policy_obs_{obs_index}: root_lin_vel_x")
-        print(f"policy_obs_{obs_index+1}: root_lin_vel_y")
-        print(f"policy_obs_{obs_index+2}: root_lin_vel_z")
-        obs_index += 3
-
-        # Root angular velocities (3 values)
-        print("\nRoot Angular Velocities:")
-        print(f"policy_obs_{obs_index}: root_ang_vel_x")
-        print(f"policy_obs_{obs_index+1}: root_ang_vel_y")
-        print(f"policy_obs_{obs_index+2}: root_ang_vel_z")
-        obs_index += 3
-
-        # Key body positions relative to root (9 values: 3 bodies × 3 coordinates)
-        key_body_names = ["right_foot", "left_foot", "pelvis"]
-        print("\nKey Body Positions (relative to root):")
-        for body_name in key_body_names:
-            print(f"policy_obs_{obs_index}: {body_name}_rel_x")
-            print(f"policy_obs_{obs_index+1}: {body_name}_rel_y")
-            print(f"policy_obs_{obs_index+2}: {body_name}_rel_z")
-            obs_index += 3
-
-        print(f"\nTotal observation size: {obs_index}")
-        print("=" * 50)
-
     def _setup_scene(self):
+        # This method now only handles creating and adding assets to the scene.
         self.robot = Articulation(self.cfg.robot)
         # add ground plane
         spawn_ground_plane(
@@ -186,11 +136,28 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
         self.actions = actions.clone()
 
     def _apply_action(self):
-        # For torque control, actions represent desired joint torques
-        # Scale actions to reasonable torque ranges (adjust these limits based on your robot)
-        max_torque = 1500.0  # Adjust based on your humanoid's torque limits
-        target_torques = max_torque * torch.tanh(self.actions)  # Use tanh to bound torques
-        self.robot.set_joint_effort_target(target_torques)
+        # With IdealPDActuator, actions represent desired joint positions
+        # The actuator handles PD control and torque limiting automatically
+        # Scale actions from [-1, 1] to joint position limits
+        joint_limits = self.robot.data.soft_joint_pos_limits  # Shape: (num_envs, num_joints, 2)
+        joint_range = joint_limits[..., 1] - joint_limits[..., 0]  # Shape: (num_envs, num_joints)
+        joint_center = (joint_limits[..., 1] + joint_limits[..., 0]) / 2.0  # Shape: (num_envs, num_joints)
+        
+        # Debug: Print shapes on first call
+        if not hasattr(self, '_debug_printed'):
+            print(f"Debug - Action shape: {self.actions.shape}")
+            print(f"Debug - Joint limits shape: {joint_limits.shape}")
+            print(f"Debug - Joint range shape: {joint_range.shape}")
+            print(f"Debug - Joint center shape: {joint_center.shape}")
+            print(f"Debug - Joint stiffness: {self.robot.data.joint_stiffness}")
+            self._debug_printed = True
+        
+        # Convert normalized actions to joint positions
+        # All tensors now have shape: (num_envs, num_joints)
+        target_positions = joint_center + 0.5 * joint_range * self.actions
+        
+        # Set the target positions (actuator will compute torques)
+        self.robot.set_joint_position_target(target_positions)
 
     def _get_observations(self) -> dict:
         # build task observation
@@ -204,35 +171,49 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
             self.robot.data.body_pos_w[:, self.key_body_indexes],
         )
 
-        # collect IMU data
-        imu_data = {}
-        if hasattr(self, 'imu_sensor') and self.imu_sensor is not None:
-            try:
-                imu_data = {
-                    'imu_acceleration': self.imu_sensor.data.lin_acc_b.clone(),
-                    'imu_angular_velocity': self.imu_sensor.data.ang_vel_b.clone(),
-                    'imu_orientation': self.imu_sensor.data.quat_w.clone(),
-                }
-            except Exception as e:
-                print(f"Warning: Failed to get IMU data: {e}")
+        # Check if we're in evaluation mode
+        if not hasattr(self, '_is_eval_mode'):
+            # Auto-detect on first call if not explicitly set
+            self._is_eval_mode = self._auto_detect_eval_mode()
+        is_eval_mode = self._is_eval_mode
+        
+        # Only collect sensor data during evaluation
+        if is_eval_mode:
+            # collect IMU data (avoid unnecessary cloning)
+            imu_data = {}
+            if hasattr(self, 'imu_sensor') and self.imu_sensor is not None:
+                try:
+                    # Use detach() instead of clone() to save memory
+                    imu_data = {
+                        'imu_acceleration': self.imu_sensor.data.lin_acc_b.detach(),
+                        'imu_angular_velocity': self.imu_sensor.data.ang_vel_b.detach(),
+                        'imu_orientation': self.imu_sensor.data.quat_w.detach(),
+                    }
+                except Exception as e:
+                    print(f"Warning: Failed to get IMU data: {e}")
 
-        # collect contact sensor data
-        left_contact_data = {}
-        if hasattr(self, 'left_foot_contact') and self.left_foot_contact is not None:
-            try:
-                left_contact_data = {
-                    'net_force_left_foot': self.left_foot_contact.data.net_forces_w.clone(),
-                }
-            except Exception as e:
-                print(f" Failed to get left foot contact data: {e}")
-        right_contact_data = {}
-        if hasattr(self, 'right_foot_contact') and self.right_foot_contact is not None:
-            try:
-                right_contact_data = {
-                    'net_force_right_foot': self.right_foot_contact.data.net_forces_w.clone(),
-                }
-            except Exception as e:
-                print(f"Failed to get right foot contact data: {e}")
+            # collect contact sensor data (avoid unnecessary cloning)
+            left_contact_data = {}
+            if hasattr(self, 'left_foot_contact') and self.left_foot_contact is not None:
+                try:
+                    left_contact_data = {
+                        'net_force_left_foot': self.left_foot_contact.data.net_forces_w.detach(),
+                    }
+                except Exception as e:
+                    print(f" Failed to get left foot contact data: {e}")
+            right_contact_data = {}
+            if hasattr(self, 'right_foot_contact') and self.right_foot_contact is not None:
+                try:
+                    right_contact_data = {
+                        'net_force_right_foot': self.right_foot_contact.data.net_forces_w.detach(),
+                    }
+                except Exception as e:
+                    print(f"Failed to get right foot contact data: {e}")
+        else:
+            # During training, use empty dictionaries to save memory
+            imu_data = {}
+            left_contact_data = {}
+            right_contact_data = {}
 
         # update AMP observation history
         for i in reversed(range(self.cfg.num_amp_observations - 1)):
@@ -240,17 +221,42 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
         # build AMP observation
         self.amp_observation_buffer[:, 0] = obs.clone()
 
-        # combine all sensor data in extras
-        self.extras = {
-            "amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size),
-            "pelvis_position_global": self.robot.data.body_pos_w[:, self.ref_body_index].clone(),
-            "pelvis_orientation_global": self.robot.data.body_quat_w[:, self.ref_body_index].clone(),
-            "pelvis_linear_velocity_global": self.robot.data.body_lin_vel_w[:, self.ref_body_index].clone(),
-            "pelvis_angular_velocity_global": self.robot.data.body_ang_vel_w[:, self.ref_body_index].clone(),
-            **imu_data,
-            **left_contact_data,
-            **right_contact_data,
-        }
+        # Memory monitoring (add this for debugging)
+        if hasattr(self, '_step_count'):
+            self._step_count += 1
+        else:
+            self._step_count = 0
+            
+        # Print memory usage every 1000 steps
+        if self._step_count % 1000 == 0:
+            if torch.cuda.is_available():
+                allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+                reserved = torch.cuda.memory_reserved() / 1024**3    # GB
+                print(f"Step {self._step_count}: GPU Memory - Allocated: {allocated:.2f}GB, Reserved: {reserved:.2f}GB")
+
+        # combine all sensor data in extras (reduce cloning to save memory)
+        if is_eval_mode:
+            self.extras = {
+                "amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size),
+                # Only add pelvis data during eval
+                "pelvis_position_global": self.robot.data.body_pos_w[:, self.ref_body_index],
+                "pelvis_orientation_global": self.robot.data.body_quat_w[:, self.ref_body_index],
+                "pelvis_linear_velocity_global": self.robot.data.body_lin_vel_w[:, self.ref_body_index],
+                "pelvis_angular_velocity_global": self.robot.data.body_ang_vel_w[:, self.ref_body_index],
+            }
+            
+            # Only add sensor data if it exists (avoid empty dict creation)
+            if imu_data:
+                self.extras.update(imu_data)
+            if left_contact_data:
+                self.extras.update(left_contact_data)
+            if right_contact_data:
+                self.extras.update(right_contact_data)
+        else:
+            # During training, minimal extras to save memory
+            self.extras = {
+                "amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size),
+            }
 
         return {"policy": obs}
 
@@ -270,6 +276,10 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
             env_ids = self.robot._ALL_INDICES
         self.robot.reset(env_ids)
         super()._reset_idx(env_ids)
+
+        # Clear any accumulated gradients or cached tensors
+        if hasattr(self, '_step_count') and self._step_count % 5000 == 0:
+            torch.cuda.empty_cache()  # Occasional cleanup
 
         if self.cfg.reset_strategy == "default":
             root_state, joint_pos, joint_vel = self._reset_strategy_default(env_ids)
@@ -344,7 +354,9 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
             body_rotations,
             body_linear_velocities,
             body_angular_velocities,
-        ) = self._motion_loader.sample(num_samples=num_samples, times=times)        # compute AMP observation
+        ) = self._motion_loader.sample(num_samples=num_samples, times=times)
+        
+        # compute AMP observation
         amp_observation = compute_obs(
             dof_positions[:, self.motion_dof_indexes],
             dof_velocities[:, self.motion_dof_indexes],
@@ -355,13 +367,8 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
             body_positions[:, self.motion_key_body_indexes],
         )
 
-        # Debug information to understand the shape mismatch
-        # print(f"Debug - AMP observation shape: {amp_observation.shape}")
-        # print(f"Debug - Expected amp_observation_size: {self.amp_observation_size}")
-        # print(f"Debug - Total elements: {amp_observation.numel()}")
-        # print(f"Debug - num_samples: {num_samples}")
-        # print(f"Debug - cfg.num_amp_observations: {self.cfg.num_amp_observations}")
-        # print(f"Debug - cfg.amp_observation_space: {self.cfg.amp_observation_space}")
+        # Ensure tensor is detached to prevent gradient accumulation
+        amp_observation = amp_observation.detach()
 
         # Check if reshaping is possible
         total_elements = amp_observation.numel()
@@ -383,6 +390,56 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
         if hasattr(self, 'extras') and self.extras:
             info["extras"] = self.extras
         return obs, rewards, terminated, truncated, info
+
+    def set_eval_mode(self, eval_mode: bool = True):
+        """Set the environment to evaluation mode to enable sensor data collection.
+        
+        Args:
+            eval_mode: If True, enables sensor data collection. If False, disables it for training.
+        """
+        self._is_eval_mode = eval_mode
+        if eval_mode:
+            print("Environment set to EVALUATION mode - sensor data will be collected")
+        else:
+            print("Environment set to TRAINING mode - sensor data collection disabled")
+    
+    def set_train_mode(self):
+        """Set the environment to training mode (disables sensor data collection)."""
+        self.set_eval_mode(False)
+    
+    def _auto_detect_eval_mode(self) -> bool:
+        """Automatically detect if we're in evaluation mode based on various indicators."""
+        
+        # Method 1: Check if we're being called from an evaluation script
+        import inspect
+        frame = inspect.currentframe()
+        try:
+            while frame:
+                filename = frame.f_code.co_filename
+                if 'eval' in filename.lower() or 'test' in filename.lower():
+                    return True
+                frame = frame.f_back
+        finally:
+            del frame
+        
+        # Method 2: Check if environment is in deterministic mode (often used in eval)
+        if hasattr(self, 'is_deterministic') and self.is_deterministic:
+            return True
+            
+        # Method 3: Check render mode (evaluation often renders)
+        if hasattr(self, 'render_mode') and self.render_mode is not None:
+            return True
+            
+        # Default to training mode
+        return False
+    
+    def _update_eval_mode(self):
+        """Update the evaluation mode automatically based on certain conditions."""
+        detected_mode = self._auto_detect_eval_mode()
+        if detected_mode != getattr(self, '_is_eval_mode', False):
+            self.set_eval_mode(detected_mode)
+            mode_str = "EVALUATION" if detected_mode else "TRAINING"
+            print(f"=== Automatic Mode Switch: {mode_str} ===")
 
 
 @torch.jit.script

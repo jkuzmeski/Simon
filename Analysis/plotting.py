@@ -191,23 +191,27 @@ def find_heel_strikes(data, threshold=10.0):
     left_force = data[left_force_col].values
     for i in range(1, len(left_force)):
         # Check if force crosses threshold while increasing
-        if (left_force[i] > threshold and 
-            left_force[i-1] <= threshold and 
-            left_force[i] > left_force[i-1]):
+        if (left_force[i] > threshold
+            and left_force[i - 1] <= threshold
+            and left_force[i] > left_force[i - 1]):
+            # Mark the frame before the threshold is crossed (i-1)
+            heel_strike_frame = i - 1
             # Check if enough time has passed since last heel strike (minimum 25 timesteps)
-            if not heel_strikes['left_foot'] or i - heel_strikes['left_foot'][-1] > 250:
-                heel_strikes['left_foot'].append(i)
+            if not heel_strikes['left_foot'] or heel_strike_frame - heel_strikes['left_foot'][-1] > 250:
+                heel_strikes['left_foot'].append(heel_strike_frame)
     
     # Find heel strikes for right foot
     right_force = data[right_force_col].values
     for i in range(1, len(right_force)):
         # Check if force crosses threshold while increasing
-        if (right_force[i] > threshold and 
-            right_force[i-1] <= threshold and 
-            right_force[i] > right_force[i-1]):
+        if (right_force[i] > threshold
+            and right_force[i - 1] <= threshold
+            and right_force[i] > right_force[i - 1]):
+            # Mark the frame before the threshold is crossed (i-1)
+            heel_strike_frame = i - 1
             # Check if enough time has passed since last heel strike (minimum 25 timesteps)
-            if not heel_strikes['right_foot'] or i - heel_strikes['right_foot'][-1] > 250:
-                heel_strikes['right_foot'].append(i)
+            if not heel_strikes['right_foot'] or heel_strike_frame - heel_strikes['right_foot'][-1] > 250:
+                heel_strikes['right_foot'].append(heel_strike_frame)
     
     print(f"Found {len(heel_strikes['left_foot'])} left heel strikes")
     print(f"Found {len(heel_strikes['right_foot'])} right heel strikes")
@@ -263,19 +267,10 @@ def chop_data_by_gait_cycles(data, heel_strikes, foot='right_foot'):
     return gait_cycles
 
 
-def plot_results(all_data, variables, heel_strikes=None):
+def plot_results(all_data, variables):
     """
     Plots each variable from the DataFrame.
     The DataFrame index is used as the x-axis.
-    
-    Parameters:
-    -----------
-    all_data : pd.DataFrame
-        DataFrame containing the time series data
-    variables : list
-        List of variable names to plot
-    heel_strikes : dict, optional
-        Dictionary containing heel strike indices for left and right feet
     """
     # The error "KeyError: 'time_step'" suggests 'time_step' is not a column.
     # It is likely the index of your DataFrame.
@@ -287,21 +282,6 @@ def plot_results(all_data, variables, heel_strikes=None):
             plt.figure(figsize=(12, 8))
             # pandas' .plot() method uses the DataFrame index for the x-axis by default.
             all_data[var].plot(grid=True)
-            
-            # Add heel strike markers if provided
-            if heel_strikes:
-                # Add vertical lines for left foot heel strikes
-                for strike in heel_strikes.get('left_foot', []):
-                    plt.axvline(x=strike, color='red', linestyle='-', alpha=0.7, linewidth=1, label='Left heel strike' if strike == heel_strikes['left_foot'][0] else "")
-                
-                # Add vertical lines for right foot heel strikes
-                for strike in heel_strikes.get('right_foot', []):
-                    plt.axvline(x=strike, color='blue', linestyle='-', alpha=0.7, linewidth=1, label='Right heel strike' if strike == heel_strikes['right_foot'][0] else "")
-                
-                # Add legend if heel strikes are present
-                if heel_strikes.get('left_foot') or heel_strikes.get('right_foot'):
-                    plt.legend()
-            
             plt.title(f'{var} over Time')
             plt.xlabel("Time Step")
             plt.ylabel(var)
@@ -444,7 +424,7 @@ def main():
     cycles = chop_data_by_gait_cycles(all_data, heelstrikes, foot='right_foot')  # Chop data into gait cycles
     plot_gait_cycles(cycles, variables, foot='right_foot', overlay=True)  # Plot gait cycles
     plot_average_gait_cycle(cycles, variables, foot='right_foot')  # Plot average gait cycle with std
-    plot_results(all_data, variables, heel_strikes=heelstrikes)  # Pass heel strikes to plotting function
+    plot_results(all_data, variables)  # Plot time series without heel strike markers
 
 if __name__ == "__main__":
     main()

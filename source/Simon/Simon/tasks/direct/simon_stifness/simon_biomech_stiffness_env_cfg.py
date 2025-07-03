@@ -10,7 +10,7 @@ from dataclasses import MISSING
 
 from isaaclab_assets.robots.simon_IMU import simon_IMU  # Changed import
 
-from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -25,7 +25,7 @@ class SimonBiomechStiffnessEnvCfg(DirectRLEnvCfg):
     """Humanoid AMP environment config (base class)."""
 
     # env
-    episode_length_s = 10
+    episode_length_s = 30
     decimation = 1
 
     # spaces
@@ -59,61 +59,50 @@ class SimonBiomechStiffnessEnvCfg(DirectRLEnvCfg):
     )
 
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=3072, env_spacing=5.0, replicate_physics=True)  # Increased num_envs from 2048 to 3072
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=5.0, replicate_physics=True)  # Reduced from 2048 to 1024 to save memory
 
     # robot
-    robot: ArticulationCfg = simon_IMU.replace(prim_path="/World/envs/env_.*/Robot").replace(  # Changed to simon_half_CFG
-        spawn=simon_IMU.spawn.replace(activate_contact_sensors=True),  # Add this line
+    robot: ArticulationCfg = simon_IMU.replace(prim_path="/World/envs/env_.*/Robot").replace(
         actuators={
-            # Hip joints - based on human muscle groups
-            "hip_x": ImplicitActuatorCfg(
-                joint_names_expr=[".*hip_x"],
-                velocity_limit_sim=100.0,
-                stiffness=120.0,  # Hip abduction/adduction (glute medius)
-                damping=12.0,
-            ),
-            "hip_y": ImplicitActuatorCfg(
-                joint_names_expr=[".*hip_y"],
-                velocity_limit_sim=100.0,
-                stiffness=180.0,  # Hip flexion/extension (strongest - glutes/hip flexors)
-                damping=18.0,
-            ),
-            "hip_z": ImplicitActuatorCfg(
-                joint_names_expr=[".*hip_z"],
-                velocity_limit_sim=100.0,
-                stiffness=100.0,  # Hip rotation (deep rotators)
-                damping=10.0,
-            ),
-            # Knee joints - quadriceps/hamstrings
-            "knee": ImplicitActuatorCfg(
-                joint_names_expr=[".*knee"],
-                velocity_limit_sim=100.0,
-                stiffness=150.0,  # Knee flexion/extension
-                damping=15.0,
-            ),
-            # Ankle joints - lower stiffness for natural compliance
-            "ankle_x": ImplicitActuatorCfg(
-                joint_names_expr=[".*ankle_x"],
-                velocity_limit_sim=100.0,
-                stiffness=60.0,  # Ankle dorsi/plantarflexion (calf muscles)
-                damping=6.0,
-            ),
-            "ankle_y": ImplicitActuatorCfg(
-                joint_names_expr=[".*ankle_y"],
-                velocity_limit_sim=100.0,
-                stiffness=40.0,  # Ankle inversion/eversion (peroneals)
-                damping=4.0,
-            ),
-            "ankle_z": ImplicitActuatorCfg(
-                joint_names_expr=[".*ankle_z"],
-                velocity_limit_sim=100.0,
-                stiffness=30.0,  # Ankle rotation (minimal natural stiffness)
-                damping=3.0,
+            "body": IdealPDActuatorCfg(
+                joint_names_expr=[".*"],
+                stiffness={
+                    # Hip joints - Primary movement planes stronger
+                    "right_hip_x": 1200.0, "right_hip_y": 600.0, "right_hip_z": 400.0,  # Flex/Abd/Rot
+                    "left_hip_x": 1200.0, "left_hip_y": 600.0, "left_hip_z": 400.0,
+                    
+                    # Knee joints - High stiffness for weight bearing
+                    "right_knee": 1800.0, "left_knee": 1800.0,  # Slightly reduced but still strong
+                    
+                    # Ankle joints - Lower stiffness, foot is more compliant
+                    "right_ankle_x": 800.0, "right_ankle_y": 400.0, "right_ankle_z": 300.0,  # Dorsi/Inv/Rot
+                    "left_ankle_x": 800.0, "left_ankle_y": 400.0, "left_ankle_z": 300.0,
+                },
+                damping={
+                    # Hip damping - Proportional to stiffness (typically 10-15% of stiffness)
+                    "right_hip_x": 120.0, "right_hip_y": 60.0, "right_hip_z": 40.0,
+                    "left_hip_x": 120.0, "left_hip_y": 60.0, "left_hip_z": 40.0,
+                    
+                    # Knee damping - Higher for stability
+                    "right_knee": 180.0, "left_knee": 180.0,
+                    
+                    # Ankle damping - Lower for foot compliance
+                    "right_ankle_x": 80.0, "right_ankle_y": 40.0, "right_ankle_z": 30.0,
+                    "left_ankle_x": 80.0, "left_ankle_y": 40.0, "left_ankle_z": 30.0,
+                },
+                effort_limit={
+                    # These are good - based on human muscle strength data
+                    "right_hip_x": 150.0, "right_hip_y": 80.0, "right_hip_z": 50.0,
+                    "left_hip_x": 150.0, "left_hip_y": 80.0, "left_hip_z": 50.0,
+                    "right_knee": 200.0, "left_knee": 200.0,
+                    "right_ankle_x": 100.0, "right_ankle_y": 80.0, "right_ankle_z": 50.0,
+                    "left_ankle_x": 100.0, "left_ankle_y": 80.0, "left_ankle_z": 50.0,
+                },
             ),
         },
     )
-
-
+    
+    
 @configclass
 class SimonBiomechStiffnessRunEnvCfg(SimonBiomechStiffnessEnvCfg):
     motion_file = os.path.join(MOTIONS_DIR, "humanoid_half_run.npz")

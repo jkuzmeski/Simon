@@ -20,8 +20,8 @@ from isaaclab.app import AppLauncher
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with skrl.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
-parser.add_argument("--video_length", type=int, default=400, help="Length of the recorded video (in steps).")
-parser.add_argument("--video_interval", type=int, default=10000, help="Interval between video recordings (in steps).")
+parser.add_argument("--video_length", type=int, default=1200, help="Length of the recorded video (in steps).")
+parser.add_argument("--video_interval", type=int, default=20000, help="Interval between video recordings (in steps).")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
@@ -43,6 +43,12 @@ parser.add_argument(
     default="AMP",
     choices=["AMP", "PPO", "IPPO", "MAPPO"],
     help="The RL algorithm used for training the skrl agent.",
+)
+parser.add_argument(
+    "--collect_sensors",
+    action="store_true",
+    default=False,
+    help="Enable sensor data collection during training (uses more GPU memory)."
 )
 
 # append AppLauncher cli args
@@ -161,6 +167,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+
+    # Set environment mode based on command line argument
+    if hasattr(env.unwrapped, 'set_eval_mode'):
+        if args_cli.collect_sensors:
+            env.unwrapped.set_eval_mode(True)
+            print("[INFO] Environment set to evaluation mode - sensor data collection enabled")
+        else:
+            env.unwrapped.set_train_mode()
+            print("[INFO] Environment set to training mode - sensor data collection disabled for memory efficiency")
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv) and algorithm in ["ppo"]:

@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
 
 
@@ -41,10 +41,40 @@ simon_IMU = ArticulationCfg(
         joint_pos={".*": 0.0},
     ),
     actuators={
-        "body": ImplicitActuatorCfg(
+        "body": IdealPDActuatorCfg(
             joint_names_expr=[".*"],
-            stiffness=None,
-            damping=None,
+            stiffness={
+                # Hip joints - Primary movement planes stronger
+                "right_hip_x": 1200.0, "right_hip_y": 600.0, "right_hip_z": 400.0,  # Flex/Abd/Rot
+                "left_hip_x": 1200.0, "left_hip_y": 600.0, "left_hip_z": 400.0,
+                
+                # Knee joints - High stiffness for weight bearing
+                "right_knee": 1800.0, "left_knee": 1800.0,  # Slightly reduced but still strong
+                
+                # Ankle joints - Lower stiffness, foot is more compliant
+                "right_ankle_x": 800.0, "right_ankle_y": 400.0, "right_ankle_z": 300.0,  # Dorsi/Inv/Rot
+                "left_ankle_x": 800.0, "left_ankle_y": 400.0, "left_ankle_z": 300.0,
+            },
+            damping={
+                # Hip damping - Proportional to stiffness (typically 10-15% of stiffness)
+                "right_hip_x": 120.0, "right_hip_y": 60.0, "right_hip_z": 40.0,
+                "left_hip_x": 120.0, "left_hip_y": 60.0, "left_hip_z": 40.0,
+                
+                # Knee damping - Higher for stability
+                "right_knee": 180.0, "left_knee": 180.0,
+                
+                # Ankle damping - Lower for foot compliance
+                "right_ankle_x": 80.0, "right_ankle_y": 40.0, "right_ankle_z": 30.0,
+                "left_ankle_x": 80.0, "left_ankle_y": 40.0, "left_ankle_z": 30.0,
+            },
+            effort_limit={
+                # These are good - based on human muscle strength data
+                "right_hip_x": 150.0, "right_hip_y": 80.0, "right_hip_z": 50.0,
+                "left_hip_x": 150.0, "left_hip_y": 80.0, "left_hip_z": 50.0,
+                "right_knee": 200.0, "left_knee": 200.0,
+                "right_ankle_x": 100.0, "right_ankle_y": 80.0, "right_ankle_z": 50.0,
+                "left_ankle_x": 100.0, "left_ankle_y": 80.0, "left_ankle_z": 50.0,
+            },
         ),
     },
 )

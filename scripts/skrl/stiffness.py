@@ -157,6 +157,10 @@ def main():
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    
+    env.unwrapped.set_eval_mode(True)
+    print("[INFO] Environment set to evaluation mode - sensor data collection enabled")
+
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv) and algorithm in ["ppo"]:
@@ -488,9 +492,9 @@ def main():
                         # Dynamically adjust knee stiffness and damping
                         if initial_knee_stiffness is not None and initial_knee_damping is not None and knee_joint_ids:
                             # Calculate increase factor (0% to 150% over max_distance)
-                            increase_factor = 1.0 + (current_distance_from_origin / args_cli.max_distance) * 5.0
+                            increase_factor = 1.0 + (current_distance_from_origin / args_cli.max_distance) * 0.2
                             # Clamp the factor to a max of 2.5 to avoid exceeding reasonable limits
-                            increase_factor = min(increase_factor, 6.0)
+                            increase_factor = min(increase_factor, 1.2)
                             
                             new_stiffness = initial_knee_stiffness * increase_factor
                             new_damping = initial_knee_damping * increase_factor
