@@ -24,7 +24,7 @@ parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
-parser.add_argument("--task", type=str, default=None, help="Name of the task. If not provided, will try to load from checkpoint metadata.")
+parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint.")
 parser.add_argument(
     "--use_pretrained_checkpoint",
@@ -70,7 +70,19 @@ parser.add_argument(
     default=100000,
     help="Maximum timesteps to run when using distance termination (safety limit to prevent infinite runs).",
 )
-
+parser.add_argument(
+    "--modulation_type",
+    type=str,
+    default="stiffness",
+    choices=["stiffness", "effort"],
+    help="Type of joint parameter to modulate over distance: 'stiffness' or 'effort'.",
+)
+parser.add_argument(
+    "--modulation_percent",
+    type=float,
+    default=20.0,
+    help="Percentage change in the selected parameter over max_distance (e.g., 20.0 for 20% increase in stiffness or 20% decrease in effort limit).",
+)
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -90,7 +102,6 @@ import os
 import time
 import torch
 import csv  # Add this import
-import yaml
 
 import skrl
 from packaging import version
@@ -124,64 +135,8 @@ import Simon.tasks  # noqa: F401
 algorithm = args_cli.algorithm.lower()
 
 
-def load_task_from_metadata(checkpoint_path):
-    """Load task name from metadata if available."""
-    if not checkpoint_path:
-        return None
-    
-    # Try to find metadata in the checkpoint directory structure
-    checkpoint_dir = os.path.dirname(checkpoint_path)
-    
-    # Look for metadata files in common locations
-    possible_metadata_paths = [
-        os.path.join(checkpoint_dir, "..", "params", "metadata.yaml"),
-        os.path.join(checkpoint_dir, "..", "params", "metadata.pkl"),
-        os.path.join(checkpoint_dir, "params", "metadata.yaml"), 
-        os.path.join(checkpoint_dir, "params", "metadata.pkl"),
-    ]
-    
-    for metadata_path in possible_metadata_paths:
-        abs_metadata_path = os.path.abspath(metadata_path)
-        if os.path.exists(abs_metadata_path):
-            try:
-                if abs_metadata_path.endswith('.yaml'):
-                    with open(abs_metadata_path, 'r') as f:
-                        metadata = yaml.safe_load(f)
-                        if metadata and 'task' in metadata:
-                            print(f"[INFO] Auto-detected task '{metadata['task']}' from metadata: {abs_metadata_path}")
-                            return metadata['task']
-                elif abs_metadata_path.endswith('.pkl'):
-                    import pickle
-                    with open(abs_metadata_path, 'rb') as f:
-                        metadata = pickle.load(f)
-                        if metadata and 'task' in metadata:
-                            print(f"[INFO] Auto-detected task '{metadata['task']}' from metadata: {abs_metadata_path}")
-                            return metadata['task']
-            except Exception as e:
-                print(f"[WARNING] Could not load metadata from {abs_metadata_path}: {e}")
-                continue
-    
-    print("[WARNING] Could not find task metadata. Please specify --task manually.")
-    return None
-
-
 def main():
     """Play with skrl agent."""
-    # If task is not provided, try to auto-detect from checkpoint metadata
-    task_name = args_cli.task
-    if not task_name and args_cli.checkpoint:
-        task_name = load_task_from_metadata(args_cli.checkpoint)
-        if task_name:
-            args_cli.task = task_name
-        else:
-            print("[ERROR] Task name not provided and could not be auto-detected from checkpoint metadata.")
-            print("Please specify --task manually.")
-            return
-    elif not task_name:
-        print("[ERROR] Task name must be provided when not using a checkpoint with metadata.")
-        print("Please specify --task.")
-        return
-
     # configure the ML framework into the global skrl variable
     if args_cli.ml_framework.startswith("jax"):
         skrl.config.jax.backend = "jax" if args_cli.ml_framework == "jax" else "numpy"
@@ -263,12 +218,12 @@ def main():
     biomechanics_csv_path = None
     episode_terminated_unsuccessfully = False  # Track if current episode failed
     if args_cli.save_biomechanics_data:
-        biomechanics_dir = os.path.join(log_dir, "biomechanics")
+        biomechanics_dir = os.path.join(log_dir, "stiffness")
         os.makedirs(biomechanics_dir, exist_ok=True)
         # Create a unique filename with a timestamp
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-        biomechanics_csv_path = os.path.join(biomechanics_dir, f"biomechanics_data_{timestamp_str}.csv")
-        print(f"[INFO] Saving biomechanics data to: {biomechanics_csv_path}")
+        biomechanics_csv_path = os.path.join(biomechanics_dir, f"stiffness_data_{timestamp_str}.csv")
+        print(f"[INFO] Saving stiffness data to: {biomechanics_csv_path}")
         print("[INFO] Only successful runs (not terminated due to failure) will be saved.")
     # --- End Biomechanics data saving setup ---
 
@@ -280,12 +235,17 @@ def main():
     initial_pelvis_x = None
     current_distance_from_origin = 0.0
     max_distance_reached = False
+    initial_knee_stiffness = None
+    initial_knee_damping = None
+    initial_knee_effort_limit = None
+    knee_joint_ids = []
     
     # We'll set the initial pelvis position after the first step, not from reset
     if args_cli.use_distance_termination:
         print(f"[INFO] Distance termination enabled. Will run until agent moves {args_cli.max_distance}m from origin.")
         print("[INFO] Initial pelvis position will be captured after first simulation step.")
         print(f"[INFO] Timestep limit set to {args_cli.max_timesteps_distance} for distance-based termination.")
+        print(f"[INFO] Modulation mode: {args_cli.modulation_type} will change by {args_cli.modulation_percent}% over distance.")
     else:
         print("[INFO] Timestep termination enabled. Will run for up to 1000 timesteps.")
     # --- End Distance tracking setup ---
@@ -492,6 +452,61 @@ def main():
                 # Get the unwrapped environment to access robot data
                 unwrapped_env = env.unwrapped
                 if hasattr(unwrapped_env, 'robot') and hasattr(unwrapped_env.robot, 'data'):
+                    # On the first step, get knee joint info
+                    if timestep == 1 and initial_knee_stiffness is None:
+                        robot = unwrapped_env.robot
+                        # Find knee joint indices by name. Adjust names if needed.
+                        knee_joint_names = ["right_knee", "left_knee"]
+                        robot_joint_names = [name.strip() for name in robot.joint_names]
+                        for name in knee_joint_names:
+                            if name in robot_joint_names:
+                                knee_joint_ids.append(robot_joint_names.index(name))
+                        
+                        if knee_joint_ids:
+                            # Store the initial values for the knee joints
+                            initial_knee_stiffness = robot.data.joint_stiffness[0, knee_joint_ids].clone()
+                            initial_knee_damping = robot.data.joint_damping[0, knee_joint_ids].clone()
+                            initial_knee_effort_limit = robot.data.joint_effort_limits[0, knee_joint_ids].clone()
+                            
+                            print(f"[INFO] Found knee joints at indices: {knee_joint_ids}")
+                            print(f"[INFO] Initial knee stiffness: {initial_knee_stiffness.cpu().numpy()}")
+                            print(f"[INFO] Initial knee damping: {initial_knee_damping.cpu().numpy()}")
+                            print(f"[INFO] Initial knee effort limits: {initial_knee_effort_limit.cpu().numpy()}")
+                            print(f"[INFO] Modulation type: {args_cli.modulation_type}")
+                            print(f"[INFO] Modulation percent: {args_cli.modulation_percent}%")
+                            
+                            # Check if initial stiffness is zero and set a default value (only for stiffness mode)
+                            if args_cli.modulation_type == "stiffness":
+                                stiffness_was_zero = torch.all(initial_knee_stiffness == 0)
+                                damping_was_zero = torch.all(initial_knee_damping == 0)
+                                
+                                if stiffness_was_zero:
+                                    default_stiffness_value = 50.0
+                                    print(f"[WARNING] Initial knee stiffness was 0. Setting to a default of {default_stiffness_value}.")
+                                    initial_knee_stiffness = torch.full_like(initial_knee_stiffness, default_stiffness_value)
+                                    # Apply this default stiffness to the simulation immediately
+                                    unwrapped_env.robot.write_joint_stiffness_to_sim(initial_knee_stiffness, joint_ids=knee_joint_ids)
+                                
+                                if damping_was_zero:
+                                    default_damping_value = 5.0  # Typical damping is usually lower than stiffness
+                                    print(f"[WARNING] Initial knee damping was 0. Setting to a default of {default_damping_value}.")
+                                    initial_knee_damping = torch.full_like(initial_knee_damping, default_damping_value)
+                                    # Apply this default damping to the simulation immediately
+                                    unwrapped_env.robot.write_joint_damping_to_sim(initial_knee_damping, joint_ids=knee_joint_ids)
+                            
+                            # Check effort limits for effort mode
+                            elif args_cli.modulation_type == "effort":
+                                effort_was_inf = torch.all(torch.isinf(initial_knee_effort_limit))
+                                if effort_was_inf:
+                                    default_effort_value = 200.0  # Default knee effort limit
+                                    print(f"[WARNING] Initial knee effort limit was infinite. Setting to a default of {default_effort_value}.")
+                                    initial_knee_effort_limit = torch.full_like(initial_knee_effort_limit, default_effort_value)
+                                    # Apply this default effort limit to the simulation immediately
+                                    unwrapped_env.robot.write_joint_effort_limit_to_sim(initial_knee_effort_limit, joint_ids=knee_joint_ids)
+
+                        else:
+                            print(f"[WARNING] Could not find knee joints. {args_cli.modulation_type.capitalize()} will not be adjusted.")
+
                     # Get pelvis position (3D: x, y, z) for first environment
                     pelvis_pos_3d = unwrapped_env.robot.data.body_pos_w[0, unwrapped_env.ref_body_index].cpu().numpy()
                     current_pelvis_x = pelvis_pos_3d[0]  # Extract X coordinate
@@ -504,10 +519,39 @@ def main():
                     # Calculate distance from initial position
                     if initial_pelvis_x is not None:
                         current_distance_from_origin = abs(current_pelvis_x - initial_pelvis_x)
+                        
+                        # Dynamically adjust knee parameters based on modulation type
+                        if knee_joint_ids and initial_knee_stiffness is not None:
+                            # Calculate progress factor (0.0 to 1.0 over max_distance)
+                            progress_factor = min(current_distance_from_origin / args_cli.max_distance, 1.0)
+                            
+                            if args_cli.modulation_type == "stiffness":
+                                # Increase stiffness and damping by modulation_percent over distance
+                                change_factor = 1.0 + (progress_factor * args_cli.modulation_percent / 100.0)
+                                
+                                new_stiffness = initial_knee_stiffness * change_factor
+                                new_damping = initial_knee_damping * change_factor
+                                
+                                # Apply the new stiffness and damping to the simulation
+                                unwrapped_env.robot.write_joint_stiffness_to_sim(new_stiffness, joint_ids=knee_joint_ids)
+                                unwrapped_env.robot.write_joint_damping_to_sim(new_damping, joint_ids=knee_joint_ids)
 
-                        # Print distance progress every 100 timesteps
-                        if timestep % 100 == 0:
-                            print(f"[INFO] Timestep {timestep}: Distance traveled: {current_distance_from_origin:.2f}m")
+                                if timestep % 100 == 0:  # Print every 100 timesteps
+                                    print(f"[INFO] Timestep {timestep}: Distance: {current_distance_from_origin:.2f}m | Knee Stiffness: {new_stiffness.cpu().numpy()} | Knee Damping: {new_damping.cpu().numpy()}")
+                            
+                            elif args_cli.modulation_type == "effort":
+                                # Decrease effort limit by modulation_percent over distance
+                                change_factor = 1.0 - (progress_factor * args_cli.modulation_percent / 100.0)
+                                # Ensure we don't go below 10% of original effort limit
+                                change_factor = max(change_factor, 0.1)
+                                
+                                new_effort_limit = initial_knee_effort_limit * change_factor
+                                
+                                # Apply the new effort limit to the simulation
+                                unwrapped_env.robot.write_joint_effort_limit_to_sim(new_effort_limit, joint_ids=knee_joint_ids)
+
+                                if timestep % 100 == 0:  # Print every 100 timesteps
+                                    print(f"[INFO] Timestep {timestep}: Distance: {current_distance_from_origin:.2f}m | Knee Effort Limit: {new_effort_limit.cpu().numpy()}")
                         
                         if current_distance_from_origin >= args_cli.max_distance:
                             max_distance_reached = True

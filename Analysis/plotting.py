@@ -2,15 +2,15 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-
-# create argparse parser
+from scipy import signal
 import os
 import argparse
 
+# create argparse parser
 parser = argparse.ArgumentParser(description="Plot simulation results from log folder.")
 parser.add_argument("--log_folder", type=str, help="Path to the log folder containing CSV files.")
 parser.add_argument("--variables", type=str, nargs='+', help="List of observation variables to plot.")
+parser.add_argument("--bump_folder", type=str, help="Path to the folder containing bump events CSV files.")
 
 
 # list of the observations in the csv files - CORRECTED MAPPING
@@ -158,9 +158,78 @@ def rad2deg(data):
     return data
 
 
-def find_heel_strikes(data, threshold=10.0):
+def filter_force_data(data, cutoff_freq=20, sampling_rate=480, filter_order=4):
+    """
+    Apply a lowpass Butterworth filter to force and IMU data columns.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame containing the force and IMU data
+    cutoff_freq : float
+        Cutoff frequency in Hz (default 20)
+    sampling_rate : float
+        Sampling rate in Hz (default 480)
+    filter_order : int
+        Filter order (default 4)
+        
+    Returns:
+    --------
+    pd.DataFrame : DataFrame with filtered force and IMU data
+    """
+    # Create a copy to avoid modifying original data
+    filtered_data = data.copy()
+    
+    # Define force columns to filter
+    force_columns = [
+        'net_force_left_foot_ap',
+        'net_force_left_foot_ml', 
+        'net_force_left_foot_vertical',
+        'net_force_right_foot_ap',
+        'net_force_right_foot_ml',
+        'net_force_right_foot_vertical'
+    ]
+    
+    # Define IMU columns to filter
+    imu_columns = [
+        'imu_acceleration_ap',
+        'imu_acceleration_ml',
+        'imu_acceleration_vertical',
+        'imu_angular_velocity_ap',
+        'imu_angular_velocity_ml',
+        'imu_angular_velocity_vertical'
+    ]
+    
+    # Calculate normalized cutoff frequency (Nyquist frequency = sampling_rate/2)
+    nyquist_freq = sampling_rate / 2
+    normalized_cutoff = cutoff_freq / nyquist_freq
+    
+    # Design the Butterworth filter
+    b, a = signal.butter(filter_order, normalized_cutoff, btype='low', analog=False)
+    
+    # Apply filter to each force column
+    for col in force_columns:
+        if col in filtered_data.columns:
+            # Apply zero-phase forward and backward filter
+            filtered_data[col] = signal.filtfilt(b, a, filtered_data[col])
+            # Set floor at 0N - any negative values become 0
+            filtered_data[col] = np.maximum(filtered_data[col], 0)
+            print(f"Applied {cutoff_freq}Hz lowpass filter to {col}")
+    
+    # Apply filter to each IMU column
+    for col in imu_columns:
+        if col in filtered_data.columns:
+            # Apply zero-phase forward and backward filter
+            filtered_data[col] = signal.filtfilt(b, a, filtered_data[col])
+            print(f"Applied {cutoff_freq}Hz lowpass filter to {col}")
+    
+    return filtered_data
+
+
+def find_heel_strikes(data, threshold=50.0):
     """
     Find heel strike events in the data based on vertical ground reaction forces.
+    Note: This function now expects pre-filtered force data.
     
     A heel strike is defined as when the net_force_left_foot_vertical or 
     net_force_right_foot_vertical rises above the threshold (default 10 N) 
@@ -169,7 +238,7 @@ def find_heel_strikes(data, threshold=10.0):
     Parameters:
     -----------
     data : pd.DataFrame
-        DataFrame containing the force data
+        DataFrame containing the filtered force data
     threshold : float
         Force threshold in Newtons (default 10.0)
         
@@ -195,7 +264,7 @@ def find_heel_strikes(data, threshold=10.0):
             and left_force[i - 1] <= threshold
             and left_force[i] > left_force[i - 1]):
             # Mark the frame before the threshold is crossed (i-1)
-            heel_strike_frame = i - 1
+            heel_strike_frame = i - 3
             # Check if enough time has passed since last heel strike (minimum 25 timesteps)
             if not heel_strikes['left_foot'] or heel_strike_frame - heel_strikes['left_foot'][-1] > 250:
                 heel_strikes['left_foot'].append(heel_strike_frame)
@@ -208,7 +277,7 @@ def find_heel_strikes(data, threshold=10.0):
             and right_force[i - 1] <= threshold
             and right_force[i] > right_force[i - 1]):
             # Mark the frame before the threshold is crossed (i-1)
-            heel_strike_frame = i - 1
+            heel_strike_frame = i - 3
             # Check if enough time has passed since last heel strike (minimum 25 timesteps)
             if not heel_strikes['right_foot'] or heel_strike_frame - heel_strikes['right_foot'][-1] > 250:
                 heel_strikes['right_foot'].append(heel_strike_frame)
@@ -267,21 +336,67 @@ def chop_data_by_gait_cycles(data, heel_strikes, foot='right_foot'):
     return gait_cycles
 
 
-def plot_results(all_data, variables):
+def plot_results(all_data, variables, bump_events=None, heel_strikes=None):
     """
-    Plots each variable from the DataFrame.
+    Plots each variable from the DataFrame with optional bump event markers.
     The DataFrame index is used as the x-axis.
+    
+    Parameters:
+    -----------
+    all_data : pd.DataFrame
+        DataFrame containing the time series data
+    variables : list
+        List of variable names to plot
+    bump_events : pd.DataFrame, optional
+        DataFrame containing bump events with 'timestep' column
+    heel_strikes : dict, optional
+        Dictionary containing heel strike indices for trimming data
     """
-    # The error "KeyError: 'time_step'" suggests 'time_step' is not a column.
-    # It is likely the index of your DataFrame.
-    # You can uncomment the following line to inspect your DataFrame's structure.
-    # print(all_data.info())
+    # Trim data to match gait cycle analysis if heel strikes are provided
+    plot_data = all_data.copy()
+    if heel_strikes is not None and 'right_foot' in heel_strikes:
+        strikes = heel_strikes['right_foot']
+        if len(strikes) > 2:
+            # Use the same trimming logic as gait cycle analysis
+            # Skip first strike and use until second-to-last strike
+            start_idx = strikes[1]
+            end_idx = strikes[-2]
+            plot_data = all_data.iloc[start_idx:end_idx].copy()
+            print(f"Trimmed timeseries data from heel strike {start_idx} to {end_idx}")
 
     for var in variables:
-        if var in all_data.columns:
+        if var in plot_data.columns:
             plt.figure(figsize=(12, 8))
             # pandas' .plot() method uses the DataFrame index for the x-axis by default.
-            all_data[var].plot(grid=True)
+            plot_data[var].plot(grid=True)
+            
+            # Add bump event markers if available
+            if bump_events is not None and not bump_events.empty:
+                bump_timesteps = bump_events['timestep'].values
+                # Get the y-values at bump timesteps for marker placement
+                for timestep in bump_timesteps:
+                    # Adjust timestep to trimmed data range
+                    if heel_strikes is not None and 'right_foot' in heel_strikes:
+                        strikes = heel_strikes['right_foot']
+                        if len(strikes) > 2:
+                            adjusted_timestep = timestep - strikes[1]
+                            if 0 <= adjusted_timestep < len(plot_data):
+                                y_val = plot_data[var].iloc[adjusted_timestep]
+                                plt.axvline(x=adjusted_timestep, color='red', linestyle='--', alpha=0.7, linewidth=2)
+                                plt.scatter(adjusted_timestep, y_val, color='red', s=100, marker='v',
+                                          zorder=5, label='Bump Event' if timestep == bump_timesteps[0] else "")
+                    else:
+                        # Original behavior if no heel strikes
+                        if timestep < len(plot_data):
+                            y_val = plot_data[var].iloc[timestep]
+                            plt.axvline(x=timestep, color='red', linestyle='--', alpha=0.7, linewidth=2)
+                            plt.scatter(timestep, y_val, color='red', s=100, marker='v',
+                                      zorder=5, label='Bump Event' if timestep == bump_timesteps[0] else "")
+                
+                # Add legend if bump events were plotted
+                if len(bump_timesteps) > 0:
+                    plt.legend()
+            
             plt.title(f'{var} over Time')
             plt.xlabel("Time Step")
             plt.ylabel(var)
@@ -404,10 +519,52 @@ def plot_average_gait_cycle(gait_cycles, variables, foot='right_foot'):
     plt.show()
 
 
+def load_bump_events(bump_folder):
+    """
+    Load bump events from the specified bump folder.
+    
+    Parameters:
+    -----------
+    bump_folder : str
+        Path to the folder containing bump events CSV files
+        
+    Returns:
+    --------
+    pd.DataFrame or None : DataFrame containing bump events or None if not found
+    """
+    if bump_folder is None:
+        print("No bump folder specified")
+        return None
+    
+    if not os.path.exists(bump_folder):
+        print(f"Bump folder '{bump_folder}' does not exist")
+        return None
+    
+    # Look for CSV files in bump folder
+    csv_files = [f for f in os.listdir(bump_folder) if f.endswith('.csv')]
+    
+    if not csv_files:
+        print("No bump events CSV files found")
+        return None
+    
+    # Load the first CSV file (assuming there's only one)
+    bump_file = csv_files[0]
+    bump_path = os.path.join(bump_folder, bump_file)
+    
+    try:
+        bump_events = pd.read_csv(bump_path)
+        print(f"Loaded {len(bump_events)} bump events from {bump_file}")
+        return bump_events
+    except Exception as e:
+        print(f"Error loading bump events: {e}")
+        return None
+
+
 def main():
     args = parser.parse_args()
     log_folder = args.log_folder
     variables = args.variables
+    bump_folder = args.bump_folder
 
     # Handle variables passed as a single string like "[var1+var2]"
     if variables and len(variables) == 1 and variables[0].startswith('[') and variables[0].endswith(']'):
@@ -420,11 +577,18 @@ def main():
 
     all_data = preprocess_data(log_folder, obs=obs)
     all_data = rad2deg(all_data)  # Convert radians to degrees for specific columns
-    heelstrikes = find_heel_strikes(all_data)  # Find heel strikes in the data
-    cycles = chop_data_by_gait_cycles(all_data, heelstrikes, foot='right_foot')  # Chop data into gait cycles
+    
+    # Load bump events if available
+    bump_events = load_bump_events(bump_folder)
+    
+    # Apply lowpass filter to force data before heel strike detection
+    filtered_data = filter_force_data(all_data, cutoff_freq=20, sampling_rate=1000, filter_order=4)
+    
+    heelstrikes = find_heel_strikes(filtered_data)  # Find heel strikes using filtered data
+    cycles = chop_data_by_gait_cycles(filtered_data, heelstrikes, foot='right_foot')  # Use filtered data for cycles
     plot_gait_cycles(cycles, variables, foot='right_foot', overlay=True)  # Plot gait cycles
     plot_average_gait_cycle(cycles, variables, foot='right_foot')  # Plot average gait cycle with std
-    plot_results(all_data, variables)  # Plot time series without heel strike markers
+    plot_results(filtered_data, variables, bump_events, heelstrikes)  # Plot filtered time series with bump markers
 
 if __name__ == "__main__":
     main()

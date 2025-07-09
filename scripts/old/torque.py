@@ -24,7 +24,7 @@ parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
-parser.add_argument("--task", type=str, default=None, help="Name of the task. If not provided, will try to load from checkpoint metadata.")
+parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint.")
 parser.add_argument(
     "--use_pretrained_checkpoint",
@@ -61,7 +61,7 @@ parser.add_argument(
 parser.add_argument(
     "--max_distance",
     type=float,
-    default=100.0,
+    default=1000.0,
     help="Maximum distance (in meters) the agent should travel from its starting position before terminating simulation when using distance termination.",
 )
 parser.add_argument(
@@ -70,7 +70,6 @@ parser.add_argument(
     default=100000,
     help="Maximum timesteps to run when using distance termination (safety limit to prevent infinite runs).",
 )
-
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -90,7 +89,6 @@ import os
 import time
 import torch
 import csv  # Add this import
-import yaml
 
 import skrl
 from packaging import version
@@ -124,64 +122,8 @@ import Simon.tasks  # noqa: F401
 algorithm = args_cli.algorithm.lower()
 
 
-def load_task_from_metadata(checkpoint_path):
-    """Load task name from metadata if available."""
-    if not checkpoint_path:
-        return None
-    
-    # Try to find metadata in the checkpoint directory structure
-    checkpoint_dir = os.path.dirname(checkpoint_path)
-    
-    # Look for metadata files in common locations
-    possible_metadata_paths = [
-        os.path.join(checkpoint_dir, "..", "params", "metadata.yaml"),
-        os.path.join(checkpoint_dir, "..", "params", "metadata.pkl"),
-        os.path.join(checkpoint_dir, "params", "metadata.yaml"), 
-        os.path.join(checkpoint_dir, "params", "metadata.pkl"),
-    ]
-    
-    for metadata_path in possible_metadata_paths:
-        abs_metadata_path = os.path.abspath(metadata_path)
-        if os.path.exists(abs_metadata_path):
-            try:
-                if abs_metadata_path.endswith('.yaml'):
-                    with open(abs_metadata_path, 'r') as f:
-                        metadata = yaml.safe_load(f)
-                        if metadata and 'task' in metadata:
-                            print(f"[INFO] Auto-detected task '{metadata['task']}' from metadata: {abs_metadata_path}")
-                            return metadata['task']
-                elif abs_metadata_path.endswith('.pkl'):
-                    import pickle
-                    with open(abs_metadata_path, 'rb') as f:
-                        metadata = pickle.load(f)
-                        if metadata and 'task' in metadata:
-                            print(f"[INFO] Auto-detected task '{metadata['task']}' from metadata: {abs_metadata_path}")
-                            return metadata['task']
-            except Exception as e:
-                print(f"[WARNING] Could not load metadata from {abs_metadata_path}: {e}")
-                continue
-    
-    print("[WARNING] Could not find task metadata. Please specify --task manually.")
-    return None
-
-
 def main():
     """Play with skrl agent."""
-    # If task is not provided, try to auto-detect from checkpoint metadata
-    task_name = args_cli.task
-    if not task_name and args_cli.checkpoint:
-        task_name = load_task_from_metadata(args_cli.checkpoint)
-        if task_name:
-            args_cli.task = task_name
-        else:
-            print("[ERROR] Task name not provided and could not be auto-detected from checkpoint metadata.")
-            print("Please specify --task manually.")
-            return
-    elif not task_name:
-        print("[ERROR] Task name must be provided when not using a checkpoint with metadata.")
-        print("Please specify --task.")
-        return
-
     # configure the ML framework into the global skrl variable
     if args_cli.ml_framework.startswith("jax"):
         skrl.config.jax.backend = "jax" if args_cli.ml_framework == "jax" else "numpy"
@@ -215,10 +157,6 @@ def main():
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
-    
-    env.unwrapped.set_eval_mode(True)
-    print("[INFO] Environment set to evaluation mode - sensor data collection enabled")
-
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv) and algorithm in ["ppo"]:
@@ -416,7 +354,7 @@ def main():
                 # unless we're in distance mode and reached the target
                 if not failure_detected:
                     episode_length = len(current_episode_data)
-                    if episode_length < 1000 and not (args_cli.use_distance_termination and max_distance_reached):
+                    if episode_length < 100 and not (args_cli.use_distance_termination and max_distance_reached):
                         failure_detected = True
                         print(f"[INFO] Episode ended early ({episode_length} timesteps), treating as failure. Data will not be saved.")
                 
@@ -457,7 +395,7 @@ def main():
                 # Additional check: if episode ended very early (< 100 timesteps), likely a failure
                 if not failure_detected:
                     episode_length = len(current_episode_data)
-                    if episode_length < 1000 and not (args_cli.use_distance_termination and max_distance_reached):
+                    if episode_length < 100 and not (args_cli.use_distance_termination and max_distance_reached):
                         failure_detected = True
                         print(f"[INFO] Episode ended early ({episode_length} timesteps), treating as failure. Data will not be saved.")
                 
@@ -504,17 +442,16 @@ def main():
                     # Calculate distance from initial position
                     if initial_pelvis_x is not None:
                         current_distance_from_origin = abs(current_pelvis_x - initial_pelvis_x)
-
-                        # Print distance progress every 100 timesteps
-                        if timestep % 100 == 0:
-                            print(f"[INFO] Timestep {timestep}: Distance traveled: {current_distance_from_origin:.2f}m")
+                        
+                        if timestep % 100 == 0:  # Print every 100 timesteps
+                            print(f"[INFO] Timestep {timestep}: Distance from start: {current_distance_from_origin:.2f}m (X: {current_pelvis_x:.3f}m)")
                         
                         if current_distance_from_origin >= args_cli.max_distance:
                             max_distance_reached = True
                             print(f"[INFO] Distance termination reached: {current_distance_from_origin:.2f}m >= {args_cli.max_distance}m")
                             # Save current episode data as successful since distance goal was reached
                             print(f"[DEBUG] Current episode data length: {len(current_episode_data)}")
-                            print(f"[DEBUG] Episode terminated_unsuccessfully: {episode_terminated_unsuccessfully}")
+                            print(f"[DEBUG] Episode terminated unsuccessfully: {episode_terminated_unsuccessfully}")
                             if current_episode_data:
                                 print(f"[INFO] Distance goal achieved! Saving {len(current_episode_data)} data points from successful episode.")
                                 biomechanics_data_to_save.extend(current_episode_data)

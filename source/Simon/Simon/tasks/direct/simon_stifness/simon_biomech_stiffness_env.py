@@ -232,7 +232,7 @@ class SimonBiomechStiffnessEnv(DirectRLEnv):
             if torch.cuda.is_available():
                 allocated = torch.cuda.memory_allocated() / 1024**3  # GB
                 reserved = torch.cuda.memory_reserved() / 1024**3    # GB
-                print(f"Step {self._step_count}: GPU Memory - Allocated: {allocated:.2f}GB, Reserved: {reserved:.2f}GB")
+                # print(f"Step {self._step_count}: GPU Memory - Allocated: {allocated:.2f}GB, Reserved: {reserved:.2f}GB")
 
         # combine all sensor data in extras (reduce cloning to save memory)
         if is_eval_mode:

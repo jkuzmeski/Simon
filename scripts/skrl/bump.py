@@ -70,6 +70,25 @@ parser.add_argument(
     default=100000,
     help="Maximum timesteps to run when using distance termination (safety limit to prevent infinite runs).",
 )
+parser.add_argument(
+    "--enable_random_bumps",
+    action="store_true",
+    default=False,
+    help="Enable random force bumps at the pelvis during simulation.",
+)
+parser.add_argument(
+    "--bump_force_magnitude",
+    type=float,
+    default=50.0,
+    help="Magnitude of the random bump force (in Newtons).",
+)
+parser.add_argument(
+    "--bump_interval_range",
+    type=float,
+    nargs=2,
+    default=[2.0, 8.0],
+    help="Range for random intervals between bumps (in seconds).",
+)
 
 
 # append AppLauncher cli args
@@ -91,6 +110,7 @@ import time
 import torch
 import csv  # Add this import
 import yaml
+import random
 
 import skrl
 from packaging import version
@@ -272,6 +292,26 @@ def main():
         print("[INFO] Only successful runs (not terminated due to failure) will be saved.")
     # --- End Biomechanics data saving setup ---
 
+    # --- Random bump setup ---
+    bump_data_to_save = []
+    bump_csv_path = None
+    next_bump_time = None
+    
+    if args_cli.enable_random_bumps:
+        bump_dir = os.path.join(log_dir, "bump_events")
+        os.makedirs(bump_dir, exist_ok=True)
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        bump_csv_path = os.path.join(bump_dir, f"bump_events_{timestamp_str}.csv")
+        print(f"[INFO] Random bumps enabled with force magnitude: {args_cli.bump_force_magnitude}N")
+        print(f"[INFO] Bump interval range: {args_cli.bump_interval_range[0]}-{args_cli.bump_interval_range[1]} seconds")
+        print(f"[INFO] Saving bump event data to: {bump_csv_path}")
+        
+        # Schedule first bump
+        first_bump_delay = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
+        next_bump_time = first_bump_delay * 480  # Convert to timesteps (assuming 480 Hz)
+        print(f"[INFO] First bump scheduled at timestep {int(next_bump_time)}")
+    # --- End Random bump setup ---
+
     # reset environment
     current_obs, current_info = env.reset()  # Get initial obs and info
     timestep = 0
@@ -293,6 +333,67 @@ def main():
     # simulate environment - terminate based on timesteps or distance
     max_timesteps = 1000 if not args_cli.use_distance_termination else args_cli.max_timesteps_distance
     while timestep < max_timesteps and not max_distance_reached:
+        # --- Apply random bump if enabled and scheduled ---
+        if args_cli.enable_random_bumps and next_bump_time is not None and timestep >= next_bump_time:
+            try:
+                # Get the unwrapped environment to access the robot
+                unwrapped_env = env.unwrapped
+                if hasattr(unwrapped_env, 'robot') and hasattr(unwrapped_env.robot, 'data'):
+                    # Apply random force bump to pelvis
+                    num_envs = unwrapped_env.robot.num_instances
+                    
+                    # Find pelvis body index
+                    pelvis_body_ids = [unwrapped_env.robot.data.body_names.index("pelvis")]
+                    
+                    # Create random force direction (mostly horizontal)
+                    force_direction = torch.zeros(3, device=unwrapped_env.device)
+                    force_direction[0] = random.uniform(-0.01, 0.01)  # X component
+                    force_direction[1] = random.uniform(-1.0, 1.0)  # Y component
+                    force_direction[2] = random.uniform(-0.01, 0.01)  # Small Z component
+                    force_direction = force_direction / torch.norm(force_direction)  # Normalize
+                    
+                    # Scale by magnitude
+                    bump_force = force_direction * args_cli.bump_force_magnitude
+                    
+                    # Apply force to all environments
+                    forces = torch.zeros(num_envs, len(pelvis_body_ids), 3, device=unwrapped_env.device)
+                    torques = torch.zeros(num_envs, len(pelvis_body_ids), 3, device=unwrapped_env.device)
+                    forces[:, 0, :] = bump_force
+                    
+                    unwrapped_env.robot.set_external_force_and_torque(forces, torques, body_ids=pelvis_body_ids)
+                    
+                    # Record bump event
+                    bump_event = {
+                        'timestep': timestep,
+                        'force_x': bump_force[0].item(),
+                        'force_y': bump_force[1].item(),
+                        'force_z': bump_force[2].item(),
+                        'force_magnitude': args_cli.bump_force_magnitude,
+                    }
+                    
+                    # Add distance info if available
+                    if args_cli.use_distance_termination and initial_pelvis_x is not None:
+                        bump_event['distance_from_origin'] = current_distance_from_origin
+                        pelvis_pos_3d = unwrapped_env.robot.data.body_pos_w[0, unwrapped_env.ref_body_index].cpu().numpy()
+                        bump_event['pelvis_x'] = pelvis_pos_3d[0]
+                        bump_event['pelvis_y'] = pelvis_pos_3d[1]
+                        bump_event['pelvis_z'] = pelvis_pos_3d[2]
+                    
+                    bump_data_to_save.append(bump_event)
+                    
+                    print(f"[BUMP] Applied force at timestep {timestep}: [{bump_force[0]:.1f}, {bump_force[1]:.1f}, {bump_force[2]:.1f}] N")
+                    
+                    # Schedule next bump
+                    next_interval = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
+                    next_bump_time = timestep + (next_interval * 480)  # Convert seconds to timesteps
+                    
+            except Exception as e:
+                print(f"[WARNING] Failed to apply bump force: {e}")
+                # Schedule next bump anyway
+                next_interval = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
+                next_bump_time = timestep + (next_interval * 480)
+        # --- End bump application ---
+        
         start_time = time.time()
 
         # --- Save biomechanics data for current_obs and current_info ---
@@ -591,6 +692,22 @@ def main():
         else:
             print("[INFO] No successful episode data to save.")
     # --- End Write biomechanics data to CSV ---
+
+    # --- Write bump data to CSV ---
+    if args_cli.enable_random_bumps and bump_data_to_save:
+        print(f"[INFO] Writing {len(bump_data_to_save)} bump event records to CSV...")
+        try:
+            with open(bump_csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = bump_data_to_save[0].keys()
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(bump_data_to_save)
+                print(f"[INFO] Bump event data successfully saved to: {bump_csv_path}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save bump event data: {e}")
+    elif args_cli.enable_random_bumps:
+        print("[INFO] No bump events occurred during simulation.")
+    # --- End Write bump data to CSV ---
 
     # close the simulator
     env.close()

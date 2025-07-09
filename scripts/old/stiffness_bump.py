@@ -70,6 +70,38 @@ parser.add_argument(
     default=100000,
     help="Maximum timesteps to run when using distance termination (safety limit to prevent infinite runs).",
 )
+parser.add_argument(
+    "--modulation_type",
+    type=str,
+    default="stiffness",
+    choices=["stiffness", "effort"],
+    help="Type of joint parameter to modulate over distance: 'stiffness' or 'effort'.",
+)
+parser.add_argument(
+    "--modulation_percent",
+    type=float,
+    default=0.0,
+    help="Percentage change in the selected parameter over max_distance (e.g., 20.0 for 20% increase in stiffness or 20% decrease in effort limit).",
+)
+parser.add_argument(
+    "--enable_random_bumps",
+    action="store_true",
+    default=False,
+    help="Enable random force bumps at the pelvis during simulation.",
+)
+parser.add_argument(
+    "--bump_force_magnitude",
+    type=float,
+    default=50.0,
+    help="Magnitude of the random bump force (in Newtons).",
+)
+parser.add_argument(
+    "--bump_interval_range",
+    type=float,
+    nargs=2,
+    default=[2.0, 8.0],
+    help="Range for random intervals between bumps (in seconds).",
+)
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -89,6 +121,7 @@ import os
 import time
 import torch
 import csv  # Add this import
+import random
 
 import skrl
 from packaging import version
@@ -117,6 +150,7 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path, load_cfg_from_registry, parse_env_cfg
 
 import Simon.tasks  # noqa: F401
+import isaaclab.assets.articulation
 
 # config shortcuts
 algorithm = args_cli.algorithm.lower()
@@ -214,6 +248,26 @@ def main():
         print("[INFO] Only successful runs (not terminated due to failure) will be saved.")
     # --- End Biomechanics data saving setup ---
 
+    # --- Random bump setup ---
+    bump_data_to_save = []
+    bump_csv_path = None
+    next_bump_time = None
+    
+    if args_cli.enable_random_bumps:
+        bump_dir = os.path.join(log_dir, "bump_events")
+        os.makedirs(bump_dir, exist_ok=True)
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        bump_csv_path = os.path.join(bump_dir, f"bump_events_{timestamp_str}.csv")
+        print(f"[INFO] Random bumps enabled with force magnitude: {args_cli.bump_force_magnitude}N")
+        print(f"[INFO] Bump interval range: {args_cli.bump_interval_range[0]}-{args_cli.bump_interval_range[1]} seconds")
+        print(f"[INFO] Saving bump event data to: {bump_csv_path}")
+        
+        # Schedule first bump
+        first_bump_delay = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
+        next_bump_time = first_bump_delay * 480  # Convert to timesteps (assuming 480 Hz)
+        print(f"[INFO] First bump scheduled at timestep {int(next_bump_time)}")
+    # --- End Random bump setup ---
+
     # reset environment
     current_obs, current_info = env.reset()  # Get initial obs and info
     timestep = 0
@@ -224,6 +278,7 @@ def main():
     max_distance_reached = False
     initial_knee_stiffness = None
     initial_knee_damping = None
+    initial_knee_effort_limit = None
     knee_joint_ids = []
     
     # We'll set the initial pelvis position after the first step, not from reset
@@ -231,6 +286,7 @@ def main():
         print(f"[INFO] Distance termination enabled. Will run until agent moves {args_cli.max_distance}m from origin.")
         print("[INFO] Initial pelvis position will be captured after first simulation step.")
         print(f"[INFO] Timestep limit set to {args_cli.max_timesteps_distance} for distance-based termination.")
+        print(f"[INFO] Modulation mode: {args_cli.modulation_type} will change by {args_cli.modulation_percent}% over distance.")
     else:
         print("[INFO] Timestep termination enabled. Will run for up to 1000 timesteps.")
     # --- End Distance tracking setup ---
@@ -238,6 +294,68 @@ def main():
     # simulate environment - terminate based on timesteps or distance
     max_timesteps = 1000 if not args_cli.use_distance_termination else args_cli.max_timesteps_distance
     while timestep < max_timesteps and not max_distance_reached:
+        
+        # --- Apply random bump if enabled and scheduled ---
+        if args_cli.enable_random_bumps and next_bump_time is not None and timestep >= next_bump_time:
+            try:
+                # Get the unwrapped environment to access the robot
+                unwrapped_env = env.unwrapped
+                if hasattr(unwrapped_env, 'robot') and hasattr(unwrapped_env.robot, 'data'):
+                    # Apply random force bump to pelvis
+                    num_envs = unwrapped_env.robot.num_instances
+                    
+                    # Find pelvis body index
+                    pelvis_body_ids = [unwrapped_env.robot.data.body_names.index("pelvis")]
+                    
+                    # Create random force direction (mostly horizontal)
+                    force_direction = torch.zeros(3, device=unwrapped_env.device)
+                    force_direction[0] = random.uniform(-0.01, 0.01)  # X component
+                    force_direction[1] = random.uniform(-1.0, 1.0)  # Y component
+                    force_direction[2] = random.uniform(-0.01, 0.01)  # Small Z component
+                    force_direction = force_direction / torch.norm(force_direction)  # Normalize
+                    
+                    # Scale by magnitude
+                    bump_force = force_direction * args_cli.bump_force_magnitude
+                    
+                    # Apply force to all environments
+                    forces = torch.zeros(num_envs, len(pelvis_body_ids), 3, device=unwrapped_env.device)
+                    torques = torch.zeros(num_envs, len(pelvis_body_ids), 3, device=unwrapped_env.device)
+                    forces[:, 0, :] = bump_force
+                    
+                    unwrapped_env.robot.set_external_force_and_torque(forces, torques, body_ids=pelvis_body_ids)
+                    
+                    # Record bump event
+                    bump_event = {
+                        'timestep': timestep,
+                        'force_x': bump_force[0].item(),
+                        'force_y': bump_force[1].item(),
+                        'force_z': bump_force[2].item(),
+                        'force_magnitude': args_cli.bump_force_magnitude,
+                    }
+                    
+                    # Add distance info if available
+                    if args_cli.use_distance_termination and initial_pelvis_x is not None:
+                        bump_event['distance_from_origin'] = current_distance_from_origin
+                        pelvis_pos_3d = unwrapped_env.robot.data.body_pos_w[0, unwrapped_env.ref_body_index].cpu().numpy()
+                        bump_event['pelvis_x'] = pelvis_pos_3d[0]
+                        bump_event['pelvis_y'] = pelvis_pos_3d[1]
+                        bump_event['pelvis_z'] = pelvis_pos_3d[2]
+                    
+                    bump_data_to_save.append(bump_event)
+                    
+                    print(f"[BUMP] Applied force at timestep {timestep}: [{bump_force[0]:.1f}, {bump_force[1]:.1f}, {bump_force[2]:.1f}] N")
+                    
+                    # Schedule next bump
+                    next_interval = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
+                    next_bump_time = timestep + (next_interval * 480)  # Convert seconds to timesteps
+                    
+            except Exception as e:
+                print(f"[WARNING] Failed to apply bump force: {e}")
+                # Schedule next bump anyway
+                next_interval = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
+                next_bump_time = timestep + (next_interval * 480)
+        # --- End bump application ---
+        
         start_time = time.time()
 
         # --- Save biomechanics data for current_obs and current_info ---
@@ -361,7 +479,7 @@ def main():
                 # unless we're in distance mode and reached the target
                 if not failure_detected:
                     episode_length = len(current_episode_data)
-                    if episode_length < 100 and not (args_cli.use_distance_termination and max_distance_reached):
+                    if episode_length < 1000 and not (args_cli.use_distance_termination and max_distance_reached):
                         failure_detected = True
                         print(f"[INFO] Episode ended early ({episode_length} timesteps), treating as failure. Data will not be saved.")
                 
@@ -448,33 +566,49 @@ def main():
                                 knee_joint_ids.append(robot_joint_names.index(name))
                         
                         if knee_joint_ids:
-                            # Store the initial stiffness and damping for the knee joints
+                            # Store the initial values for the knee joints
                             initial_knee_stiffness = robot.data.joint_stiffness[0, knee_joint_ids].clone()
                             initial_knee_damping = robot.data.joint_damping[0, knee_joint_ids].clone()
+                            initial_knee_effort_limit = robot.data.joint_effort_limits[0, knee_joint_ids].clone()
+                            
                             print(f"[INFO] Found knee joints at indices: {knee_joint_ids}")
                             print(f"[INFO] Initial knee stiffness: {initial_knee_stiffness.cpu().numpy()}")
                             print(f"[INFO] Initial knee damping: {initial_knee_damping.cpu().numpy()}")
+                            print(f"[INFO] Initial knee effort limits: {initial_knee_effort_limit.cpu().numpy()}")
+                            print(f"[INFO] Modulation type: {args_cli.modulation_type}")
+                            print(f"[INFO] Modulation percent: {args_cli.modulation_percent}%")
                             
-                            # Check if initial stiffness is zero and set a default value
-                            stiffness_was_zero = torch.all(initial_knee_stiffness == 0)
-                            damping_was_zero = torch.all(initial_knee_damping == 0)
+                            # Check if initial stiffness is zero and set a default value (only for stiffness mode)
+                            if args_cli.modulation_type == "stiffness":
+                                stiffness_was_zero = torch.all(initial_knee_stiffness == 0)
+                                damping_was_zero = torch.all(initial_knee_damping == 0)
+                                
+                                if stiffness_was_zero:
+                                    default_stiffness_value = 50.0
+                                    print(f"[WARNING] Initial knee stiffness was 0. Setting to a default of {default_stiffness_value}.")
+                                    initial_knee_stiffness = torch.full_like(initial_knee_stiffness, default_stiffness_value)
+                                    # Apply this default stiffness to the simulation immediately
+                                    unwrapped_env.robot.write_joint_stiffness_to_sim(initial_knee_stiffness, joint_ids=knee_joint_ids)
+                                
+                                if damping_was_zero:
+                                    default_damping_value = 5.0  # Typical damping is usually lower than stiffness
+                                    print(f"[WARNING] Initial knee damping was 0. Setting to a default of {default_damping_value}.")
+                                    initial_knee_damping = torch.full_like(initial_knee_damping, default_damping_value)
+                                    # Apply this default damping to the simulation immediately
+                                    unwrapped_env.robot.write_joint_damping_to_sim(initial_knee_damping, joint_ids=knee_joint_ids)
                             
-                            if stiffness_was_zero:
-                                default_stiffness_value = 50.0
-                                print(f"[WARNING] Initial knee stiffness was 0. Setting to a default of {default_stiffness_value}.")
-                                initial_knee_stiffness = torch.full_like(initial_knee_stiffness, default_stiffness_value)
-                                # Apply this default stiffness to the simulation immediately
-                                unwrapped_env.robot.write_joint_stiffness_to_sim(initial_knee_stiffness, joint_ids=knee_joint_ids)
-                            
-                            if damping_was_zero:
-                                default_damping_value = 5.0  # Typical damping is usually lower than stiffness
-                                print(f"[WARNING] Initial knee damping was 0. Setting to a default of {default_damping_value}.")
-                                initial_knee_damping = torch.full_like(initial_knee_damping, default_damping_value)
-                                # Apply this default damping to the simulation immediately
-                                unwrapped_env.robot.write_joint_damping_to_sim(initial_knee_damping, joint_ids=knee_joint_ids)
+                            # Check effort limits for effort mode
+                            elif args_cli.modulation_type == "effort":
+                                effort_was_inf = torch.all(torch.isinf(initial_knee_effort_limit))
+                                if effort_was_inf:
+                                    default_effort_value = 200.0  # Default knee effort limit
+                                    print(f"[WARNING] Initial knee effort limit was infinite. Setting to a default of {default_effort_value}.")
+                                    initial_knee_effort_limit = torch.full_like(initial_knee_effort_limit, default_effort_value)
+                                    # Apply this default effort limit to the simulation immediately
+                                    unwrapped_env.robot.write_joint_effort_limit_to_sim(initial_knee_effort_limit, joint_ids=knee_joint_ids)
 
                         else:
-                            print("[WARNING] Could not find knee joints. Stiffness will not be adjusted.")
+                            print(f"[WARNING] Could not find knee joints. {args_cli.modulation_type.capitalize()} will not be adjusted.")
 
                     # Get pelvis position (3D: x, y, z) for first environment
                     pelvis_pos_3d = unwrapped_env.robot.data.body_pos_w[0, unwrapped_env.ref_body_index].cpu().numpy()
@@ -489,22 +623,38 @@ def main():
                     if initial_pelvis_x is not None:
                         current_distance_from_origin = abs(current_pelvis_x - initial_pelvis_x)
                         
-                        # Dynamically adjust knee stiffness and damping
-                        if initial_knee_stiffness is not None and initial_knee_damping is not None and knee_joint_ids:
-                            # Calculate increase factor (0% to 150% over max_distance)
-                            increase_factor = 1.0 + (current_distance_from_origin / args_cli.max_distance) * 0.2
-                            # Clamp the factor to a max of 2.5 to avoid exceeding reasonable limits
-                            increase_factor = min(increase_factor, 1.2)
+                        # Dynamically adjust knee parameters based on modulation type
+                        if knee_joint_ids and initial_knee_stiffness is not None:
+                            # Calculate progress factor (0.0 to 1.0 over max_distance)
+                            progress_factor = min(current_distance_from_origin / args_cli.max_distance, 1.0)
                             
-                            new_stiffness = initial_knee_stiffness * increase_factor
-                            new_damping = initial_knee_damping * increase_factor
-                            
-                            # Apply the new stiffness and damping to the simulation for the knee joints
-                            unwrapped_env.robot.write_joint_stiffness_to_sim(new_stiffness, joint_ids=knee_joint_ids)
-                            unwrapped_env.robot.write_joint_damping_to_sim(new_damping, joint_ids=knee_joint_ids)
+                            if args_cli.modulation_type == "stiffness":
+                                # Increase stiffness and damping by modulation_percent over distance
+                                change_factor = 1.0 + (progress_factor * args_cli.modulation_percent / 100.0)
+                                
+                                new_stiffness = initial_knee_stiffness * change_factor
+                                new_damping = initial_knee_damping * change_factor
+                                
+                                # Apply the new stiffness and damping to the simulation
+                                unwrapped_env.robot.write_joint_stiffness_to_sim(new_stiffness, joint_ids=knee_joint_ids)
+                                unwrapped_env.robot.write_joint_damping_to_sim(new_damping, joint_ids=knee_joint_ids)
 
-                            if timestep % 100 == 0:  # Print every 100 timesteps
-                                print(f"[INFO] Timestep {timestep}: Distance: {current_distance_from_origin:.2f}m | Knee Stiffness: {new_stiffness.cpu().numpy()} | Knee Damping: {new_damping.cpu().numpy()}")
+                                if timestep % 100 == 0:  # Print every 100 timesteps
+                                    print(f"[INFO] Timestep {timestep}: Distance: {current_distance_from_origin:.2f}m | Knee Stiffness: {new_stiffness.cpu().numpy()} | Knee Damping: {new_damping.cpu().numpy()}")
+                            
+                            elif args_cli.modulation_type == "effort":
+                                # Decrease effort limit by modulation_percent over distance
+                                change_factor = 1.0 - (progress_factor * args_cli.modulation_percent / 100.0)
+                                # Ensure we don't go below 10% of original effort limit
+                                change_factor = max(change_factor, 0.1)
+                                
+                                new_effort_limit = initial_knee_effort_limit * change_factor
+                                
+                                # Apply the new effort limit to the simulation
+                                unwrapped_env.robot.write_joint_effort_limit_to_sim(new_effort_limit, joint_ids=knee_joint_ids)
+
+                                if timestep % 100 == 0:  # Print every 100 timesteps
+                                    print(f"[INFO] Timestep {timestep}: Distance: {current_distance_from_origin:.2f}m | Knee Effort Limit: {new_effort_limit.cpu().numpy()}")
                         
                         if current_distance_from_origin >= args_cli.max_distance:
                             max_distance_reached = True
@@ -591,6 +741,22 @@ def main():
 
     # close the simulator
     env.close()
+
+    # --- Write bump data to CSV ---
+    if args_cli.enable_random_bumps and bump_data_to_save:
+        print(f"[INFO] Writing {len(bump_data_to_save)} bump event records to CSV...")
+        try:
+            with open(bump_csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = bump_data_to_save[0].keys()
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(bump_data_to_save)
+                print(f"[INFO] Bump event data successfully saved to: {bump_csv_path}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save bump event data: {e}")
+    elif args_cli.enable_random_bumps:
+        print("[INFO] No bump events occurred during simulation.")
+    # --- End Write bump data to CSV ---
 
 
 if __name__ == "__main__":

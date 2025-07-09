@@ -161,6 +161,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
     dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
     dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
+    
+    # save task metadata for easy evaluation
+    metadata = {
+        "task": args_cli.task,
+        "algorithm": args_cli.algorithm,
+        "ml_framework": args_cli.ml_framework,
+        "seed": agent_cfg["seed"]
+    }
+    dump_yaml(os.path.join(log_dir, "params", "metadata.yaml"), metadata)
+    dump_pickle(os.path.join(log_dir, "params", "metadata.pkl"), metadata)
 
     # get checkpoint path (to resume training)
     resume_path = retrieve_file_path(args_cli.checkpoint) if args_cli.checkpoint else None
