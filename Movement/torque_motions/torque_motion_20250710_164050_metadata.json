@@ -1,0 +1,52 @@
+{
+  "fps": {
+    "dtype": "float64",
+    "shape": "()",
+    "file": "torque_motion_20250710_164050_fps.csv"
+  },
+  "dof_names": {
+    "dtype": "<U13",
+    "shape": "(14,)",
+    "file": "torque_motion_20250710_164050_dof_names.csv"
+  },
+  "body_names": {
+    "dtype": "<U11",
+    "shape": "(7,)",
+    "file": "torque_motion_20250710_164050_body_names.csv"
+  },
+  "joint_torques": {
+    "dtype": "float32",
+    "shape": "(890, 14)",
+    "file": "torque_motion_20250710_164050_joint_torques.csv"
+  },
+  "dof_positions": {
+    "dtype": "float32",
+    "shape": "(890, 14)",
+    "file": "torque_motion_20250710_164050_dof_positions.csv"
+  },
+  "dof_velocities": {
+    "dtype": "float32",
+    "shape": "(890, 14)",
+    "file": "torque_motion_20250710_164050_dof_velocities.csv"
+  },
+  "body_positions": {
+    "dtype": "float32",
+    "shape": "(890, 7, 3)",
+    "file": "torque_motion_20250710_164050_body_positions.csv"
+  },
+  "body_rotations": {
+    "dtype": "float32",
+    "shape": "(890, 7, 4)",
+    "file": "torque_motion_20250710_164050_body_rotations.csv"
+  },
+  "body_linear_velocities": {
+    "dtype": "float32",
+    "shape": "(890, 7, 3)",
+    "file": "torque_motion_20250710_164050_body_linear_velocities.csv"
+  },
+  "body_angular_velocities": {
+    "dtype": "float32",
+    "shape": "(890, 7, 3)",
+    "file": "torque_motion_20250710_164050_body_angular_velocities.csv"
+  }
+}

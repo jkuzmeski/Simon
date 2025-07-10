@@ -170,8 +170,15 @@ def main():
     # If task is not provided, try to auto-detect from checkpoint metadata
     task_name = args_cli.task
     if not task_name and args_cli.checkpoint:
-        task_name = load_task_from_metadata(args_cli.checkpoint)
-        if task_name:
+        base_task = load_task_from_metadata(args_cli.checkpoint)
+        if base_task:
+            # Smart task switching: prefer eval version for biomechanics analysis
+            if "Train" in base_task and args_cli.save_biomechanics_data:
+                eval_task = base_task.replace("Train", "Eval")
+                print(f"[INFO] Auto-switching from training task '{base_task}' to evaluation task '{eval_task}' for biomechanics analysis")
+                task_name = eval_task
+            else:
+                task_name = base_task
             args_cli.task = task_name
         else:
             print("[ERROR] Task name not provided and could not be auto-detected from checkpoint metadata.")

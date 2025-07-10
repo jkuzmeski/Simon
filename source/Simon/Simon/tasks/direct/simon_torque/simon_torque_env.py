@@ -17,14 +17,21 @@ from isaaclab.utils.math import quat_rotate
 from isaaclab.sensors import Imu, ImuCfg, ContactSensor, ContactSensorCfg
 
 
-from .simon_biomech_env_cfg import SimonBiomechEnvCfg
+from .simon_torque_env_cfg import SimonTorqueEnvCfg
 from .motions import MotionLoader
+# Try to import TorqueMotionLoader if available, fallback to regular MotionLoader
+try:
+    from Movement.torque_motion_loader import TorqueMotionLoader
+    TORQUE_MOTION_LOADER_AVAILABLE = True
+except ImportError:
+    TorqueMotionLoader = MotionLoader  # Fallback
+    TORQUE_MOTION_LOADER_AVAILABLE = False
 
 
-class SimonBiomechEnv(DirectRLEnv):
-    cfg: SimonBiomechEnvCfg
+class SimonTorqueEnv(DirectRLEnv):
+    cfg: SimonTorqueEnvCfg
 
-    def __init__(self, cfg: SimonBiomechEnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: SimonTorqueEnvCfg, render_mode: str | None = None, **kwargs):
         # create IMU sensor configuration only if enabled
         if cfg.enable_imu_sensor:
             self.imu_cfg = ImuCfg(
@@ -57,14 +64,47 @@ class SimonBiomechEnv(DirectRLEnv):
 
         super().__init__(cfg, render_mode, **kwargs)
 
-        # action offset and scale
-        dof_lower_limits = self.robot.data.soft_joint_pos_limits[0, :, 0]
-        dof_upper_limits = self.robot.data.soft_joint_pos_limits[0, :, 1]
-        self.action_offset = 0.25 * (dof_upper_limits + dof_lower_limits)
-        self.action_scale = dof_upper_limits - dof_lower_limits
+        # action offset and scale for torque control
+        # For torque control, we typically want actions in range [-1, 1] to map to reasonable torque values
+        # Estimate reasonable torque limits based on joint characteristics
+        max_torque = 300.0  # Maximum torque in N⋅m (adjust based on your robot's capabilities)
+        self.action_offset = torch.zeros(self.robot.num_joints, device=self.device)  # No offset for torques
+        self.action_scale = torch.full((self.robot.num_joints,), max_torque, device=self.device)  # Scale to max torque
 
-        # load motion
-        self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
+        # load motion - use TorqueMotionLoader if available and torque features enabled
+        try:
+            if TORQUE_MOTION_LOADER_AVAILABLE and cfg.enable_torque_amp:
+                self._motion_loader = TorqueMotionLoader(motion_file=self.cfg.motion_file, device=self.device)
+                print("[INFO] Using TorqueMotionLoader for torque-based AMP")
+            else:
+                self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
+                if cfg.enable_torque_amp:
+                    print("[WARNING] TorqueMotionLoader not available, falling back to regular MotionLoader")
+        except ValueError as e:
+            # Fallback to regular MotionLoader if torque data not found
+            print(f"[WARNING] Failed to load as torque motion file: {e}")
+            print("[INFO] Falling back to regular MotionLoader")
+            self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
+
+        # Check if we actually have torque data and adjust observation space accordingly
+        self.has_torque_data = hasattr(self._motion_loader, 'has_torque_data') and self._motion_loader.has_torque_data
+        if cfg.enable_torque_amp and self.has_torque_data:
+            # Use torque-enhanced observation space
+            actual_amp_obs_space = 64  # 50 standard + 14 torques
+            actual_policy_obs_space = 64  # Policy observations should match AMP for consistency
+            print(f"[INFO] Torque data available - using expanded observation spaces: AMP={actual_amp_obs_space}, Policy={actual_policy_obs_space}")
+        else:
+            # Use standard observation space
+            actual_amp_obs_space = 50
+            actual_policy_obs_space = 50
+            if cfg.enable_torque_amp:
+                print(f"[WARNING] Torque AMP requested but no torque data available - using standard observation spaces: AMP={actual_amp_obs_space}, Policy={actual_policy_obs_space}")
+            else:
+                print(f"[INFO] Using standard observation spaces: AMP={actual_amp_obs_space}, Policy={actual_policy_obs_space}")
+        
+        # Update the configuration to match actual capabilities
+        self.cfg.amp_observation_space = actual_amp_obs_space
+        self.cfg.observation_space = actual_policy_obs_space
 
         # DOF and key body indexes
         key_body_names = ["right_foot", "left_foot", "pelvis"]
@@ -142,6 +182,12 @@ class SimonBiomechEnv(DirectRLEnv):
             obs_index += 3
 
         print(f"\nTotal observation size: {obs_index}")
+        if self.has_torque_data and self.cfg.include_torque_in_amp:
+            print("\nTorque Observations (for AMP discriminator):")
+            for i, joint_name in enumerate(self.robot.data.joint_names):
+                print(f"amp_obs_{obs_index + i}: {joint_name} (torque)")
+            obs_index += len(self.robot.data.joint_names)
+            print(f"Total AMP observation size with torques: {obs_index}")
         print("=" * 50)
 
     def _setup_scene(self):
@@ -202,20 +248,45 @@ class SimonBiomechEnv(DirectRLEnv):
         self.actions = actions.clone()
 
     def _apply_action(self):
-        target = self.action_offset + self.action_scale * self.actions
-        self.robot.set_joint_position_target(target)
+        # Use torque control for the agent's learning
+        # Actions represent desired joint torques directly
+        applied_torques = self.action_scale * self.actions  # Scale actions to appropriate torque range
+        self.robot.set_joint_effort_target(applied_torques)
+        
+        # Store the applied torques for observations and AMP
+        self.current_applied_torques = applied_torques.clone()
 
     def _get_observations(self) -> dict:
-        # build task observation
-        obs = compute_obs(
-            self.robot.data.joint_pos,
-            self.robot.data.joint_vel,
-            self.robot.data.body_pos_w[:, self.ref_body_index],
-            self.robot.data.body_quat_w[:, self.ref_body_index],
-            self.robot.data.body_lin_vel_w[:, self.ref_body_index],
-            self.robot.data.body_ang_vel_w[:, self.ref_body_index],
-            self.robot.data.body_pos_w[:, self.key_body_indexes],
-        )
+        # build task observation - include torques in AMP observations if available
+        if self.has_torque_data and self.cfg.include_torque_in_amp:
+            # Use torque-enhanced observations for AMP buffer
+            obs = compute_obs_with_torques(
+                self.robot.data.joint_pos,
+                self.robot.data.joint_vel,
+                self.robot.data.body_pos_w[:, self.ref_body_index],
+                self.robot.data.body_quat_w[:, self.ref_body_index],
+                self.robot.data.body_lin_vel_w[:, self.ref_body_index],
+                self.robot.data.body_ang_vel_w[:, self.ref_body_index],
+                self.robot.data.body_pos_w[:, self.key_body_indexes],
+                self.robot.data.applied_torque,  # Current robot torques
+            )
+        else:
+            # Standard observations
+            obs = compute_obs(
+                self.robot.data.joint_pos,
+                self.robot.data.joint_vel,
+                self.robot.data.body_pos_w[:, self.ref_body_index],
+                self.robot.data.body_quat_w[:, self.ref_body_index],
+                self.robot.data.body_lin_vel_w[:, self.ref_body_index],
+                self.robot.data.body_ang_vel_w[:, self.ref_body_index],
+                self.robot.data.body_pos_w[:, self.key_body_indexes],
+            )
+        
+        # add additional torques to observation if configured (separate from AMP)
+        if self.cfg.include_torque_in_obs and not (self.has_torque_data and self.cfg.include_torque_in_amp):
+            # get applied torques (from robot actions) - only if not already included above
+            applied_torques = self.robot.data.applied_torque
+            obs = torch.cat([obs, applied_torques], dim=-1)
 
         # collect IMU data
         imu_data = {}
@@ -350,23 +421,50 @@ class SimonBiomechEnv(DirectRLEnv):
             - self._motion_loader.dt * np.arange(0, self.cfg.num_amp_observations)
         ).flatten()
         # get motions
-        (
-            dof_positions,
-            dof_velocities,
-            body_positions,
-            body_rotations,
-            body_linear_velocities,
-            body_angular_velocities,
-        ) = self._motion_loader.sample(num_samples=num_samples, times=times)        # compute AMP observation
-        amp_observation = compute_obs(
-            dof_positions[:, self.motion_dof_indexes],
-            dof_velocities[:, self.motion_dof_indexes],
-            body_positions[:, self.motion_ref_body_index],
-            body_rotations[:, self.motion_ref_body_index],
-            body_linear_velocities[:, self.motion_ref_body_index],
-            body_angular_velocities[:, self.motion_ref_body_index],
-            body_positions[:, self.motion_key_body_indexes],
-        )
+        if hasattr(self._motion_loader, 'sample_with_torques') and self.has_torque_data and self.cfg.include_torque_in_amp:
+            # use torque-enabled motion loader
+            (
+                dof_positions,
+                dof_velocities,
+                body_positions,
+                body_rotations,
+                body_linear_velocities,
+                body_angular_velocities,
+                joint_torques,
+            ) = self._motion_loader.sample_with_torques(num_samples=num_samples, times=times)
+            
+            # compute AMP observation with torques
+            amp_observation = compute_obs_with_torques(
+                dof_positions[:, self.motion_dof_indexes],
+                dof_velocities[:, self.motion_dof_indexes],
+                body_positions[:, self.motion_ref_body_index],
+                body_rotations[:, self.motion_ref_body_index],
+                body_linear_velocities[:, self.motion_ref_body_index],
+                body_angular_velocities[:, self.motion_ref_body_index],
+                body_positions[:, self.motion_key_body_indexes],
+                joint_torques[:, self.motion_dof_indexes],
+            )
+        else:
+            # fallback to regular motion loader
+            (
+                dof_positions,
+                dof_velocities,
+                body_positions,
+                body_rotations,
+                body_linear_velocities,
+                body_angular_velocities,
+            ) = self._motion_loader.sample(num_samples=num_samples, times=times)
+            
+            # compute AMP observation without torques
+            amp_observation = compute_obs(
+                dof_positions[:, self.motion_dof_indexes],
+                dof_velocities[:, self.motion_dof_indexes],
+                body_positions[:, self.motion_ref_body_index],
+                body_rotations[:, self.motion_ref_body_index],
+                body_linear_velocities[:, self.motion_ref_body_index],
+                body_angular_velocities[:, self.motion_ref_body_index],
+                body_positions[:, self.motion_key_body_indexes],
+            )
 
         # Debug information to understand the shape mismatch
         # print(f"Debug - AMP observation shape: {amp_observation.shape}")
@@ -442,6 +540,34 @@ def compute_obs(
             root_linear_velocities,
             root_angular_velocities,
             (key_body_positions - root_positions.unsqueeze(-2)).view(key_body_positions.shape[0], -1),
+        ),
+        dim=-1,
+    )
+    return obs
+
+
+@torch.jit.script
+def compute_obs_with_torques(
+    dof_positions: torch.Tensor,
+    dof_velocities: torch.Tensor,
+    root_positions: torch.Tensor,
+    root_rotations: torch.Tensor,
+    root_linear_velocities: torch.Tensor,
+    root_angular_velocities: torch.Tensor,
+    key_body_positions: torch.Tensor,
+    joint_torques: torch.Tensor,
+) -> torch.Tensor:
+    """Compute observations including joint torques for AMP discriminator."""
+    obs = torch.cat(
+        (
+            dof_positions,
+            dof_velocities,
+            root_positions[:, 2:3],  # root body height
+            quaternion_to_tangent_and_normal(root_rotations),
+            root_linear_velocities,
+            root_angular_velocities,
+            (key_body_positions - root_positions.unsqueeze(-2)).view(key_body_positions.shape[0], -1),
+            joint_torques,  # Add joint torques for torque-based AMP
         ),
         dim=-1,
     )

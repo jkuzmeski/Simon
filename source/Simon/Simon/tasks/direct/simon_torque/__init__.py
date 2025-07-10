@@ -13,13 +13,12 @@ from . import agents
 
 # Original environments (full sensors enabled by default)
 gym.register(
-    id="Simon-Half-Run-Biomech",
-    entry_point=f"{__name__}.simon_biomech_env:SimonBiomechEnv",
+    id="Simon-Half-Run-Torque",
+    entry_point=f"{__name__}.simon_torque_env:SimonTorqueEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.simon_biomech_env_cfg:SimonBiomechRunEnvCfg",
-        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_biomech_cfg.yaml",
-        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_biomech_cfg.yaml",
+        "env_cfg_entry_point": f"{__name__}.simon_torque_env_cfg:SimonTorqueRunEnvCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_torque_cfg.yaml",
     },
 )
 
@@ -49,23 +48,23 @@ gym.register(
 
 # Training environments (sensors disabled for performance)
 gym.register(
-    id="Simon-Train-Run-Biomech",
-    entry_point=f"{__name__}.simon_biomech_env:SimonBiomechEnv",
+    id="Simon-Train-Run-Torque",
+    entry_point=f"{__name__}.simon_torque_env:SimonTorqueEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.simon_biomech_env_cfg:SimonBiomechTrainRunEnvCfg",
-        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_biomech_cfg.yaml",
+        "env_cfg_entry_point": f"{__name__}.simon_torque_env_cfg:SimonTorqueTrainRunEnvCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_torque_cfg.yaml",
     },
 )
 
-# Evaluation environments (full sensors enabled for biomechanics analysis)
+# Evaluation environments (full sensors enabled for torque analysis)
 gym.register(
-    id="Simon-Eval-Run-Biomech",
-    entry_point=f"{__name__}.simon_biomech_env:SimonBiomechEnv",
+    id="Simon-Eval-Run-Torque",
+    entry_point=f"{__name__}.simon_torque_env:SimonTorqueEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.simon_biomech_env_cfg:SimonBiomechEvalRunEnvCfg",
-        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_biomech_cfg.yaml",
+        "env_cfg_entry_point": f"{__name__}.simon_torque_env_cfg:SimonTorqueEvalRunEnvCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_torque_cfg.yaml",
     },
 )
 

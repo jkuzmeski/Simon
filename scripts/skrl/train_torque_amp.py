@@ -1,13 +1,15 @@
+#!/usr/bin/env python3
+
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Script to train RL agent with skrl.
+Script to train RL agent with skrl using torque-based AMP.
 
-Visit the skrl documentation (https://skrl.readthedocs.io) to see the examples structured in
-a more user-friendly way.
+This extends the standard AMP training to learn from expert torque profiles
+collected from previously trained agents, enabling torque-level imitation learning.
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -18,7 +20,7 @@ import sys
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Train an RL agent with skrl.")
+parser = argparse.ArgumentParser(description="Train an RL agent with skrl using torque-based AMP.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=400, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
@@ -49,6 +51,25 @@ parser.add_argument(
     action="store_true",
     default=False,
     help="Enable sensor data collection during training (uses more GPU memory)."
+)
+parser.add_argument(
+    "--torque_motion_files",
+    type=str,
+    nargs="+",
+    default=None,
+    help="Paths to torque motion NPZ files for AMP training. Multiple files can be specified."
+)
+parser.add_argument(
+    "--torque_weight",
+    type=float,
+    default=1.0,
+    help="Weight for torque imitation loss in AMP discriminator."
+)
+parser.add_argument(
+    "--use_torque_amp",
+    action="store_true",
+    default=False,
+    help="Enable torque-based AMP mode with joint torque features in discriminator."
 )
 
 # append AppLauncher cli args
@@ -115,7 +136,7 @@ agent_cfg_entry_point = "skrl_cfg_entry_point" if algorithm in ["ppo"] else f"sk
 
 @hydra_task_config(args_cli.task, agent_cfg_entry_point)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: dict):
-    """Train with skrl agent."""
+    """Train with skrl agent using torque-based AMP."""
     # override configurations with non-hydra CLI arguments
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
@@ -140,12 +161,68 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg["seed"] = args_cli.seed if args_cli.seed is not None else agent_cfg["seed"]
     env_cfg.seed = agent_cfg["seed"]
 
+    # Configure torque-based AMP if requested
+    if args_cli.use_torque_amp:
+        print("[INFO] Enabling torque-based AMP mode")
+        
+        if not args_cli.torque_motion_files:
+            raise ValueError("--torque_motion_files must be specified when using --use_torque_amp")
+        
+        # Validate torque motion files exist
+        valid_files = []
+        for file_path in args_cli.torque_motion_files:
+            if os.path.exists(file_path):
+                valid_files.append(file_path)
+                print(f"[INFO] Found torque motion file: {file_path}")
+            else:
+                print(f"[WARNING] Torque motion file not found: {file_path}")
+        
+        if not valid_files:
+            raise ValueError("No valid torque motion files found")
+        
+        # Update environment config to use the first torque motion file
+        env_cfg.motion_file = valid_files[0]  # Use the first torque motion file
+        print(f"[INFO] Using torque motion file: {env_cfg.motion_file}")
+        
+        # Update environment config to enable torque AMP mode
+        env_cfg.enable_torque_amp = True
+        env_cfg.include_torque_in_amp = True
+        env_cfg.torque_motion_files = valid_files
+        env_cfg.torque_weight = args_cli.torque_weight
+        
+        # Set the correct observation space size for torque AMP
+        env_cfg.amp_observation_space = 64  # 50 standard + 14 torques
+        env_cfg.observation_space = 64      # Policy observations must match AMP observations
+        
+        print(f"[INFO] Configured torque-based AMP with {len(valid_files)} motion files")
+        print(f"[INFO] Torque weight: {args_cli.torque_weight}")
+        print(f"[INFO] AMP observation space: {env_cfg.amp_observation_space}")
+        
+        # Check if it's actually a torque motion file
+        try:
+            import numpy as np
+            data = np.load(valid_files[0])
+            if "joint_torques" in data.files:
+                print("[INFO] Confirmed torque data found in motion file")
+            else:
+                print("[WARNING] No torque data found in motion file - falling back to standard AMP")
+                env_cfg.amp_observation_space = 50  # Standard observation space
+                env_cfg.observation_space = 50      # Policy observations must match
+                env_cfg.include_torque_in_amp = False
+        except Exception as e:
+            print(f"[WARNING] Could not validate torque motion file: {e}")
+            env_cfg.amp_observation_space = 50  # Standard observation space
+            env_cfg.observation_space = 50      # Policy observations must match
+            env_cfg.include_torque_in_amp = False
+
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "skrl", agent_cfg["agent"]["experiment"]["directory"])
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs: {time-stamp}_{run_name}
-    log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") # + f"_{algorithm}_{args_cli.ml_framework}"
+    log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    if args_cli.use_torque_amp:
+        log_dir += "_torque_amp"
     # The Ray Tune workflow extracts experiment name using the logging line below, hence, do not change it (see PR #2346, comment-2819298849)
     print(f"Exact experiment name requested from command line: {log_dir}")
     if agent_cfg["agent"]["experiment"]["experiment_name"]:
@@ -167,7 +244,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "task": args_cli.task,
         "algorithm": args_cli.algorithm,
         "ml_framework": args_cli.ml_framework,
-        "seed": agent_cfg["seed"]
+        "seed": agent_cfg["seed"],
+        "use_torque_amp": args_cli.use_torque_amp,
+        "torque_motion_files": args_cli.torque_motion_files if args_cli.use_torque_amp else None,
+        "torque_weight": args_cli.torque_weight if args_cli.use_torque_amp else None
     }
     dump_yaml(os.path.join(log_dir, "params", "metadata.yaml"), metadata)
     dump_pickle(os.path.join(log_dir, "params", "metadata.pkl"), metadata)

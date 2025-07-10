@@ -12,9 +12,9 @@ import torch
 import mpl_toolkits.mplot3d  # noqa: F401
 
 try:
-    from .motion_loader import MotionLoader
+    from .motion_torque_loader import MotionLoader
 except ImportError:
-    from motion_loader import MotionLoader
+    from Simon.tasks.direct.simon_torque.motions.motion_torque_loader import MotionLoader
 
 
 class MotionViewer:

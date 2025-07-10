@@ -27,6 +27,11 @@ class SimonBiomechEnvCfg(DirectRLEnvCfg):
     # env
     episode_length_s = 10000
     decimation = 1
+    
+    # sensor configuration
+    enable_imu_sensor = True
+    enable_contact_sensors = True
+    save_biomechanics_data = False
 
     # spaces
     observation_space = 50  # 14 DOF pos + 14 DOF vel + 1 root height + 6 tangent/normal + 3 lin vel + 3 ang vel + 9 key body pos = 50
@@ -82,4 +87,54 @@ class SimonBiomechRunEnvCfg(SimonBiomechEnvCfg):
 
 @configclass
 class SimonBiomechWalkEnvCfg(SimonBiomechEnvCfg):
+    motion_file = os.path.join(MOTIONS_DIR, "humanoid_walk.npz")
+
+
+@configclass
+class SimonBiomechTrainEnvCfg(SimonBiomechEnvCfg):
+    """Training environment - optimized for speed"""
+    # More environments for training
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=2048, env_spacing=5.0, replicate_physics=True)
+    
+    # Disable expensive sensors during training
+    enable_imu_sensor = False
+    enable_contact_sensors = False
+    save_biomechanics_data = False
+    
+    # Shorter episodes for training efficiency
+    episode_length_s = 10.0
+
+
+@configclass
+class SimonBiomechEvalEnvCfg(SimonBiomechEnvCfg):
+    """Evaluation environment - full sensor suite for biomechanics analysis"""
+    # Fewer environments for detailed analysis
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=5.0, replicate_physics=True)
+    
+    # Enable all sensors for evaluation
+    enable_imu_sensor = True
+    enable_contact_sensors = True
+    save_biomechanics_data = True
+    
+    # Longer episodes for evaluation
+    episode_length_s = 20.0
+
+
+@configclass
+class SimonBiomechTrainRunEnvCfg(SimonBiomechTrainEnvCfg):
+    motion_file = os.path.join(MOTIONS_DIR, "humanoid_half_run.npz")
+
+
+@configclass
+class SimonBiomechTrainWalkEnvCfg(SimonBiomechTrainEnvCfg):
+    motion_file = os.path.join(MOTIONS_DIR, "humanoid_walk.npz")
+
+
+@configclass
+class SimonBiomechEvalRunEnvCfg(SimonBiomechEvalEnvCfg):
+    motion_file = os.path.join(MOTIONS_DIR, "humanoid_half_run.npz")
+
+
+@configclass
+class SimonBiomechEvalWalkEnvCfg(SimonBiomechEvalEnvCfg):
     motion_file = os.path.join(MOTIONS_DIR, "humanoid_walk.npz")

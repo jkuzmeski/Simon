@@ -53,6 +53,12 @@ parser.add_argument(
     help="Save biomechanics data (observations and extras) to a CSV file in the log directory.",
 )
 parser.add_argument(
+    "--save_torque_profiles",
+    action="store_true",
+    default=False,
+    help="Save torque profiles for motion imitation (includes joint torques, positions, velocities, and body poses).",
+)
+parser.add_argument(
     "--use_distance_termination",
     action="store_true",
     default=False,
@@ -69,25 +75,6 @@ parser.add_argument(
     type=int,
     default=100000,
     help="Maximum timesteps to run when using distance termination (safety limit to prevent infinite runs).",
-)
-parser.add_argument(
-    "--enable_random_bumps",
-    action="store_true",
-    default=False,
-    help="Enable random force bumps at the pelvis during simulation.",
-)
-parser.add_argument(
-    "--bump_force_magnitude",
-    type=float,
-    default=50.0,
-    help="Magnitude of the random bump force (in Newtons).",
-)
-parser.add_argument(
-    "--bump_interval_range",
-    type=float,
-    nargs=2,
-    default=[2.0, 8.0],
-    help="Range for random intervals between bumps (in seconds).",
 )
 
 
@@ -110,7 +97,7 @@ import time
 import torch
 import csv  # Add this import
 import yaml
-import random
+import numpy as np  # Add this import
 
 import skrl
 from packaging import version
@@ -299,25 +286,17 @@ def main():
         print("[INFO] Only successful runs (not terminated due to failure) will be saved.")
     # --- End Biomechanics data saving setup ---
 
-    # --- Random bump setup ---
-    bump_data_to_save = []
-    bump_csv_path = None
-    next_bump_time = None
-    
-    if args_cli.enable_random_bumps:
-        bump_dir = os.path.join(log_dir, "bump_events")
-        os.makedirs(bump_dir, exist_ok=True)
+    # --- Torque profile saving setup ---
+    torque_profiles_to_save = []
+    current_torque_episode_data = []  # Temporary storage for current episode torque data
+    torque_profiles_dir = None
+    if args_cli.save_torque_profiles:
+        torque_profiles_dir = os.path.join(log_dir, "torque_profiles")
+        os.makedirs(torque_profiles_dir, exist_ok=True)
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-        bump_csv_path = os.path.join(bump_dir, f"bump_events_{timestamp_str}.csv")
-        print(f"[INFO] Random bumps enabled with force magnitude: {args_cli.bump_force_magnitude}N")
-        print(f"[INFO] Bump interval range: {args_cli.bump_interval_range[0]}-{args_cli.bump_interval_range[1]} seconds")
-        print(f"[INFO] Saving bump event data to: {bump_csv_path}")
-        
-        # Schedule first bump
-        first_bump_delay = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
-        next_bump_time = first_bump_delay * 480  # Convert to timesteps (assuming 480 Hz)
-        print(f"[INFO] First bump scheduled at timestep {int(next_bump_time)}")
-    # --- End Random bump setup ---
+        print(f"[INFO] Saving torque profiles to: {torque_profiles_dir}")
+        print("[INFO] Torque profiles will include joint torques, positions, velocities, and body poses for motion imitation.")
+    # --- End Torque profile saving setup ---
 
     # reset environment
     current_obs, current_info = env.reset()  # Get initial obs and info
@@ -340,67 +319,6 @@ def main():
     # simulate environment - terminate based on timesteps or distance
     max_timesteps = 1000 if not args_cli.use_distance_termination else args_cli.max_timesteps_distance
     while timestep < max_timesteps and not max_distance_reached:
-        # --- Apply random bump if enabled and scheduled ---
-        if args_cli.enable_random_bumps and next_bump_time is not None and timestep >= next_bump_time:
-            try:
-                # Get the unwrapped environment to access the robot
-                unwrapped_env = env.unwrapped
-                if hasattr(unwrapped_env, 'robot') and hasattr(unwrapped_env.robot, 'data'):
-                    # Apply random force bump to pelvis
-                    num_envs = unwrapped_env.robot.num_instances
-                    
-                    # Find pelvis body index
-                    pelvis_body_ids = [unwrapped_env.robot.data.body_names.index("pelvis")]
-                    
-                    # Create random force direction (mostly horizontal)
-                    force_direction = torch.zeros(3, device=unwrapped_env.device)
-                    force_direction[0] = random.uniform(-0.01, 0.01)  # X component
-                    force_direction[1] = random.uniform(-1.0, 1.0)  # Y component
-                    force_direction[2] = random.uniform(-0.01, 0.01)  # Small Z component
-                    force_direction = force_direction / torch.norm(force_direction)  # Normalize
-                    
-                    # Scale by magnitude
-                    bump_force = force_direction * args_cli.bump_force_magnitude
-                    
-                    # Apply force to all environments
-                    forces = torch.zeros(num_envs, len(pelvis_body_ids), 3, device=unwrapped_env.device)
-                    torques = torch.zeros(num_envs, len(pelvis_body_ids), 3, device=unwrapped_env.device)
-                    forces[:, 0, :] = bump_force
-                    
-                    unwrapped_env.robot.set_external_force_and_torque(forces, torques, body_ids=pelvis_body_ids)
-                    
-                    # Record bump event
-                    bump_event = {
-                        'timestep': timestep,
-                        'force_x': bump_force[0].item(),
-                        'force_y': bump_force[1].item(),
-                        'force_z': bump_force[2].item(),
-                        'force_magnitude': args_cli.bump_force_magnitude,
-                    }
-                    
-                    # Add distance info if available
-                    if args_cli.use_distance_termination and initial_pelvis_x is not None:
-                        bump_event['distance_from_origin'] = current_distance_from_origin
-                        pelvis_pos_3d = unwrapped_env.robot.data.body_pos_w[0, unwrapped_env.ref_body_index].cpu().numpy()
-                        bump_event['pelvis_x'] = pelvis_pos_3d[0]
-                        bump_event['pelvis_y'] = pelvis_pos_3d[1]
-                        bump_event['pelvis_z'] = pelvis_pos_3d[2]
-                    
-                    bump_data_to_save.append(bump_event)
-                    
-                    print(f"[BUMP] Applied force at timestep {timestep}: [{bump_force[0]:.1f}, {bump_force[1]:.1f}, {bump_force[2]:.1f}] N")
-                    
-                    # Schedule next bump
-                    next_interval = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
-                    next_bump_time = timestep + (next_interval * 480)  # Convert seconds to timesteps
-                    
-            except Exception as e:
-                print(f"[WARNING] Failed to apply bump force: {e}")
-                # Schedule next bump anyway
-                next_interval = random.uniform(args_cli.bump_interval_range[0], args_cli.bump_interval_range[1])
-                next_bump_time = timestep + (next_interval * 480)
-        # --- End bump application ---
-        
         start_time = time.time()
 
         # --- Save biomechanics data for current_obs and current_info ---
@@ -478,6 +396,61 @@ def main():
                 print(f"[DEBUG] Timestep {timestep}: Not saving data because episode_terminated_unsuccessfully = True")
         # --- End Save biomechanics data ---
 
+        # --- Save torque profile data ---
+        if args_cli.save_torque_profiles and not episode_terminated_unsuccessfully:
+            # Collect torque profile data for motion imitation
+            try:
+                # Access robot state directly from environment
+                robot = env.unwrapped.scene["robot"]
+                
+                # Get current time for this sample
+                current_time = timestep * dt
+                
+                # Extract joint torques (applied torques)
+                joint_torques = robot.data.applied_torque.cpu().numpy()  # Shape: (num_envs, num_dofs)
+                
+                # Extract DOF positions and velocities
+                dof_positions = robot.data.joint_pos.cpu().numpy()  # Shape: (num_envs, num_dofs)
+                dof_velocities = robot.data.joint_vel.cpu().numpy()  # Shape: (num_envs, num_dofs)
+                
+                # Extract body positions and orientations
+                body_positions = robot.data.body_pos_w.cpu().numpy()  # Shape: (num_envs, num_bodies, 3)
+                body_rotations = robot.data.body_quat_w.cpu().numpy()  # Shape: (num_envs, num_bodies, 4) - wxyz quaternion
+                
+                # Extract body velocities
+                body_linear_vels = robot.data.body_lin_vel_w.cpu().numpy()  # Shape: (num_envs, num_bodies, 3)
+                body_angular_vels = robot.data.body_ang_vel_w.cpu().numpy()  # Shape: (num_envs, num_bodies, 3)
+                
+                # Collect data for each active environment
+                num_active_envs = joint_torques.shape[0]
+                for env_idx in range(num_active_envs):
+                    torque_data_point = {
+                        'timestep': timestep,
+                        'time': current_time,
+                        'env_idx': env_idx,
+                        'joint_torques': joint_torques[env_idx],
+                        'dof_positions': dof_positions[env_idx], 
+                        'dof_velocities': dof_velocities[env_idx],
+                        'body_positions': body_positions[env_idx],
+                        'body_rotations': body_rotations[env_idx],
+                        'body_linear_velocities': body_linear_vels[env_idx],
+                        'body_angular_velocities': body_angular_vels[env_idx]
+                    }
+                    current_torque_episode_data.append(torque_data_point)
+                    
+                if timestep == 0:
+                    print(f"[INFO] Torque profile collection started. Shape info:")
+                    print(f"  - Joint torques: {joint_torques.shape}")
+                    print(f"  - DOF positions: {dof_positions.shape}")
+                    print(f"  - DOF velocities: {dof_velocities.shape}")
+                    print(f"  - Body positions: {body_positions.shape}")
+                    print(f"  - Body rotations: {body_rotations.shape}")
+                    
+            except Exception as e:
+                if timestep == 0:  # Only print error once
+                    print(f"[WARNING] Could not collect torque profile data: {e}")
+        # --- End Save torque profile data ---
+
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping
@@ -537,6 +510,11 @@ def main():
                     print(f"[INFO] Episode completed successfully. Saving {len(current_episode_data)} data points.")
                     biomechanics_data_to_save.extend(current_episode_data)
                     current_episode_data = []
+                    # Also save torque profile data for successful episodes
+                    if args_cli.save_torque_profiles and current_torque_episode_data:
+                        print(f"[INFO] Saving {len(current_torque_episode_data)} torque profile data points.")
+                        torque_profiles_to_save.extend(current_torque_episode_data)
+                        current_torque_episode_data = []
                     episode_terminated_unsuccessfully = False
         elif isinstance(terminated, bool):  # Handle single boolean termination
             if terminated or truncated:
@@ -572,10 +550,18 @@ def main():
                 if failure_detected:
                     episode_terminated_unsuccessfully = True
                     current_episode_data = []
+                    # Clear torque data for failed episodes
+                    if args_cli.save_torque_profiles:
+                        current_torque_episode_data = []
                 else:
                     print(f"[INFO] Episode completed successfully. Saving {len(current_episode_data)} data points.")
                     biomechanics_data_to_save.extend(current_episode_data)
                     current_episode_data = []
+                    # Also save torque profile data for successful episodes
+                    if args_cli.save_torque_profiles and current_torque_episode_data:
+                        print(f"[INFO] Saving {len(current_torque_episode_data)} torque profile data points.")
+                        torque_profiles_to_save.extend(current_torque_episode_data)
+                        current_torque_episode_data = []
                     episode_terminated_unsuccessfully = False
         
         # Update obs and info for the next iteration
@@ -588,6 +574,9 @@ def main():
             current_obs, current_info = env.reset()
             # Reset episode tracking for new episode
             episode_terminated_unsuccessfully = False  # Reset failure flag for new episode
+            # Reset torque episode data for new episode
+            if args_cli.save_torque_profiles:
+                current_torque_episode_data = []
             # Reset distance tracking for new episode
             if args_cli.use_distance_termination:
                 initial_pelvis_x = None
@@ -628,6 +617,11 @@ def main():
                                 biomechanics_data_to_save.extend(current_episode_data)
                                 print(f"[DEBUG] Total data points now in biomechanics_data_to_save: {len(biomechanics_data_to_save)}")
                                 current_episode_data = []
+                                # Also save torque profile data for distance goal success
+                                if args_cli.save_torque_profiles and current_torque_episode_data:
+                                    print(f"[INFO] Distance goal achieved! Saving {len(current_torque_episode_data)} torque profile data points.")
+                                    torque_profiles_to_save.extend(current_torque_episode_data)
+                                    current_torque_episode_data = []
                                 episode_terminated_unsuccessfully = False
                             else:
                                 print("[WARNING] Distance goal reached but no current episode data to save!")
@@ -677,6 +671,11 @@ def main():
             print(f"[INFO] Saving remaining {len(current_episode_data)} data points from ongoing successful episode.")
             biomechanics_data_to_save.extend(current_episode_data)
         
+        # Save any remaining successful torque episode data  
+        if args_cli.save_torque_profiles and current_torque_episode_data and not episode_terminated_unsuccessfully:
+            print(f"[INFO] Saving remaining {len(current_torque_episode_data)} torque profile data points from ongoing successful episode.")
+            torque_profiles_to_save.extend(current_torque_episode_data)
+        
         if biomechanics_data_to_save:
             if biomechanics_csv_path:
                 fieldnames = []
@@ -700,21 +699,87 @@ def main():
             print("[INFO] No successful episode data to save.")
     # --- End Write biomechanics data to CSV ---
 
-    # --- Write bump data to CSV ---
-    if args_cli.enable_random_bumps and bump_data_to_save:
-        print(f"[INFO] Writing {len(bump_data_to_save)} bump event records to CSV...")
-        try:
-            with open(bump_csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = bump_data_to_save[0].keys()
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(bump_data_to_save)
-                print(f"[INFO] Bump event data successfully saved to: {bump_csv_path}")
-        except Exception as e:
-            print(f"[ERROR] Failed to save bump event data: {e}")
-    elif args_cli.enable_random_bumps:
-        print("[INFO] No bump events occurred during simulation.")
-    # --- End Write bump data to CSV ---
+    # --- Write torque profile data to NPZ files ---
+    if args_cli.save_torque_profiles:
+        if torque_profiles_to_save:
+            # Convert torque profile data to NPZ format
+            print(f"[INFO] Converting {len(torque_profiles_to_save)} torque profile data points to NPZ format...")
+            
+            # Extract robot and body names from environment
+            try:
+                robot = env.unwrapped.scene["robot"]
+                dof_names = robot.data.joint_names
+                body_names = robot.data.body_names
+                print(f"[INFO] Found {len(dof_names)} DOFs and {len(body_names)} bodies")
+            except Exception as e:
+                print(f"[WARNING] Could not extract DOF/body names from environment: {e}")
+                # Fallback to generic names
+                num_dofs = torque_profiles_to_save[0]['joint_torques'].shape[0]
+                num_bodies = torque_profiles_to_save[0]['body_positions'].shape[0]
+                dof_names = [f"joint_{i}" for i in range(num_dofs)]
+                body_names = [f"body_{i}" for i in range(num_bodies)]
+            
+            # Convert data to motion loader format
+            num_frames = len(torque_profiles_to_save)
+            num_dofs = len(dof_names)
+            num_bodies = len(body_names)
+            
+            # Initialize arrays
+            joint_torques = np.zeros((num_frames, num_dofs), dtype=np.float32)
+            dof_positions = np.zeros((num_frames, num_dofs), dtype=np.float32)
+            dof_velocities = np.zeros((num_frames, num_dofs), dtype=np.float32)
+            body_positions = np.zeros((num_frames, num_bodies, 3), dtype=np.float32)
+            body_rotations = np.zeros((num_frames, num_bodies, 4), dtype=np.float32)
+            body_linear_velocities = np.zeros((num_frames, num_bodies, 3), dtype=np.float32)
+            body_angular_velocities = np.zeros((num_frames, num_bodies, 3), dtype=np.float32)
+            
+            # Fill arrays with data
+            for i, data_point in enumerate(torque_profiles_to_save):
+                joint_torques[i] = data_point['joint_torques']
+                dof_positions[i] = data_point['dof_positions']
+                dof_velocities[i] = data_point['dof_velocities']
+                body_positions[i] = data_point['body_positions']
+                body_rotations[i] = data_point['body_rotations']
+                body_linear_velocities[i] = data_point['body_linear_velocities']
+                body_angular_velocities[i] = data_point['body_angular_velocities']
+            
+            # Calculate FPS (frames per second) from timestep data
+            if len(torque_profiles_to_save) > 1:
+                time_diff = torque_profiles_to_save[1]['time'] - torque_profiles_to_save[0]['time']
+                fps = 1.0 / time_diff if time_diff > 0 else 60.0  # fallback to 60 FPS
+            else:
+                fps = 60.0  # fallback to 60 FPS
+            
+            # Save to NPZ file
+            timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+            npz_filename = os.path.join(torque_profiles_dir, f"torque_motion_{timestamp_str}.npz")
+            
+            np.savez(
+                npz_filename,
+                fps=np.array(fps),
+                dof_names=np.array(dof_names, dtype='U'),
+                body_names=np.array(body_names, dtype='U'),
+                joint_torques=joint_torques,  # This is the key addition for torque-based learning
+                dof_positions=dof_positions,
+                dof_velocities=dof_velocities,
+                body_positions=body_positions,
+                body_rotations=body_rotations,
+                body_linear_velocities=body_linear_velocities,
+                body_angular_velocities=body_angular_velocities
+            )
+            
+            print(f"[INFO] Torque motion data saved to {npz_filename}")
+            print(f"[INFO] Motion duration: {num_frames / fps:.2f} seconds ({num_frames} frames at {fps:.1f} FPS)")
+            print(f"[INFO] Shape summary:")
+            print(f"  - Joint torques: {joint_torques.shape}")
+            print(f"  - DOF positions: {dof_positions.shape}")
+            print(f"  - DOF velocities: {dof_velocities.shape}")
+            print(f"  - Body positions: {body_positions.shape}")
+            print(f"  - Body rotations: {body_rotations.shape}")
+            
+        else:
+            print("[INFO] No successful torque profile data to save.")
+    # --- End Write torque profile data to NPZ files ---
 
     # close the simulator
     env.close()
