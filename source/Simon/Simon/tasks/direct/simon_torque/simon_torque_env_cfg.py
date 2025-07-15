@@ -8,9 +8,11 @@ from __future__ import annotations
 import os
 from dataclasses import MISSING
 
+# from isaaclab_assets.robots.simon_half import simon_half_CFG  # Changed import
 from isaaclab_assets.robots.simon_IMU import simon_IMU  # Changed import
 
-from isaaclab.actuators import ImplicitActuatorCfg
+#from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -46,7 +48,7 @@ class SimonTorqueEnvCfg(DirectRLEnvCfg):
     observation_space = 64  # 14 DOF pos + 14 DOF vel + 1 root height + 6 tangent/normal + 3 lin vel + 3 ang vel + 9 key body pos + 14 torques = 64
     action_space = 14  # 14 DOF actions (matching your DOF count)
     state_space = 0
-    num_amp_observations = 4
+    num_amp_observations = 16
     # AMP observation space - matches policy observation space for torque-based training
     amp_observation_space = 64  # Standard 50 + 14 torques = 64
 
@@ -74,19 +76,48 @@ class SimonTorqueEnvCfg(DirectRLEnvCfg):
     )
 
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=3072, env_spacing=5.0, replicate_physics=True)  # Increased num_envs from 2048 to 3072
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=3072, env_spacing=2.5, replicate_physics=True)  # Increased num_envs from 2048 to 3072
 
     # robot
     robot: ArticulationCfg = simon_IMU.replace(prim_path="/World/envs/env_.*/Robot").replace(  # Changed to simon_half_CFG
-        spawn=simon_IMU.spawn.replace(activate_contact_sensors=True),  # Add this line
+        spawn=simon_IMU.spawn.replace(activate_contact_sensors=True),
         actuators={
-            "body": ImplicitActuatorCfg(
+            "body": IdealPDActuatorCfg(
                 joint_names_expr=[".*"],
-                velocity_limit_sim=100.0,  # Changed from velocity_limit
-                stiffness=None,
-                damping=None,
+                stiffness={
+                    # Hip joints - Primary movement planes stronger
+                    "right_hip_x": 60.0, "right_hip_y": 120.0, "right_hip_z": 40.0,  # Flex/Abd/Rot
+                    "left_hip_x": 60.0, "left_hip_y": 120.0, "left_hip_z": 40.0,
+                    
+                    # Knee joints - High stiffness for weight bearing
+                    "right_knee": 180.0, "left_knee": 180.0,  # Slightly reduced but still strong
+                    
+                    # Ankle joints - Lower stiffness, foot is more compliant
+                    "right_ankle_x": 40.0, "right_ankle_y": 80.0, "right_ankle_z": 30.0,  # Dorsi/Inv/Rot
+                    "left_ankle_x": 40.0, "left_ankle_y": 80.0, "left_ankle_z": 30.0,
+                },
+                damping={
+                    # Hip damping - Proportional to stiffness (typically 10-15% of stiffness)
+                    "right_hip_x": 6.0, "right_hip_y": 12.0, "right_hip_z": 4.0,
+                    "left_hip_x": 6.0, "left_hip_y": 12.0, "left_hip_z": 4.0,
+
+                    # Knee damping - Higher for stability
+                    "right_knee": 180.0, "left_knee": 180.0,
+                    
+                    # Ankle damping - Lower for foot compliance
+                    "right_ankle_x": 4.0, "right_ankle_y": 8.0, "right_ankle_z": 3.0,
+                    "left_ankle_x": 4.0, "left_ankle_y": 8.0, "left_ankle_z": 3.0,
+                },
+                effort_limit={
+                    # These are good - based on human muscle strength data
+                    "right_hip_x": 150.0, "right_hip_y": 80.0, "right_hip_z": 50.0,
+                    "left_hip_x": 150.0, "left_hip_y": 80.0, "left_hip_z": 50.0,
+                    "right_knee": 200.0, "left_knee": 200.0,
+                    "right_ankle_x": 100.0, "right_ankle_y": 80.0, "right_ankle_z": 50.0,
+                    "left_ankle_x": 100.0, "left_ankle_y": 80.0, "left_ankle_z": 50.0,
+                },
             ),
-        },
+        },# Add this line
     )
 
 
@@ -108,8 +139,8 @@ class SimonTorqueWalkEnvCfg(SimonTorqueEnvCfg):
 class SimonTorqueTrainEnvCfg(SimonTorqueEnvCfg):
     """Training environment for torque-based AMP - optimized for speed"""
     # More environments for training
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=5.0, replicate_physics=True)
-    
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=3072, env_spacing=5.0, replicate_physics=True)
+
     # Optimized for training
     episode_length_s = 15.0
     decimation = 2

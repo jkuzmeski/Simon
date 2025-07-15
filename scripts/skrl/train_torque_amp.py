@@ -17,6 +17,9 @@ collected from previously trained agents, enabling torque-level imitation learni
 import argparse
 import sys
 
+# store the original command-line arguments
+_cli_command = " ".join(sys.argv)
+
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
@@ -247,7 +250,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "seed": agent_cfg["seed"],
         "use_torque_amp": args_cli.use_torque_amp,
         "torque_motion_files": args_cli.torque_motion_files if args_cli.use_torque_amp else None,
-        "torque_weight": args_cli.torque_weight if args_cli.use_torque_amp else None
+        "torque_weight": args_cli.torque_weight if args_cli.use_torque_amp else None,
+        "cli_command": _cli_command,
     }
     dump_yaml(os.path.join(log_dir, "params", "metadata.yaml"), metadata)
     dump_pickle(os.path.join(log_dir, "params", "metadata.pkl"), metadata)

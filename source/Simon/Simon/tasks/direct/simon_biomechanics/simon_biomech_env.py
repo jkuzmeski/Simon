@@ -217,53 +217,61 @@ class SimonBiomechEnv(DirectRLEnv):
             self.robot.data.body_pos_w[:, self.key_body_indexes],
         )
 
-        # collect IMU data
-        imu_data = {}
-        if hasattr(self, 'imu_sensor') and self.imu_sensor is not None:
-            try:
-                imu_data = {
-                    'imu_acceleration': self.imu_sensor.data.lin_acc_b.clone(),
-                    'imu_angular_velocity': self.imu_sensor.data.ang_vel_b.clone(),
-                    'imu_orientation': self.imu_sensor.data.quat_w.clone(),
-                }
-            except Exception as e:
-                print(f"Warning: Failed to get IMU data: {e}")
-
-        # collect contact sensor data
-        left_contact_data = {}
-        if hasattr(self, 'left_foot_contact') and self.left_foot_contact is not None:
-            try:
-                left_contact_data = {
-                    'net_force_left_foot': self.left_foot_contact.data.net_forces_w.clone(),
-                }
-            except Exception as e:
-                print(f" Failed to get left foot contact data: {e}")
-        right_contact_data = {}
-        if hasattr(self, 'right_foot_contact') and self.right_foot_contact is not None:
-            try:
-                right_contact_data = {
-                    'net_force_right_foot': self.right_foot_contact.data.net_forces_w.clone(),
-                }
-            except Exception as e:
-                print(f"Failed to get right foot contact data: {e}")
-
         # update AMP observation history
         for i in reversed(range(self.cfg.num_amp_observations - 1)):
             self.amp_observation_buffer[:, i + 1] = self.amp_observation_buffer[:, i]
         # build AMP observation
         self.amp_observation_buffer[:, 0] = obs.clone()
 
-        # combine all sensor data in extras
-        self.extras = {
-            "amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size),
-            "pelvis_position_global": self.robot.data.body_pos_w[:, self.ref_body_index].clone(),
-            "pelvis_orientation_global": self.robot.data.body_quat_w[:, self.ref_body_index].clone(),
-            "pelvis_linear_velocity_global": self.robot.data.body_lin_vel_w[:, self.ref_body_index].clone(),
-            "pelvis_angular_velocity_global": self.robot.data.body_ang_vel_w[:, self.ref_body_index].clone(),
-            **imu_data,
-            **left_contact_data,
-            **right_contact_data,
-        }
+        # Only collect detailed biomechanics data if required (e.g., during evaluation)
+        # This is a major optimization to prevent memory leaks during training.
+        if self.cfg.save_biomechanics_data:
+            # collect IMU data
+            imu_data = {}
+            if hasattr(self, 'imu_sensor') and self.imu_sensor is not None:
+                try:
+                    imu_data = {
+                        'imu_acceleration': self.imu_sensor.data.lin_acc_b.clone(),
+                        'imu_angular_velocity': self.imu_sensor.data.ang_vel_b.clone(),
+                        'imu_orientation': self.imu_sensor.data.quat_w.clone(),
+                    }
+                except Exception as e:
+                    print(f"Warning: Failed to get IMU data: {e}")
+
+            # collect contact sensor data
+            left_contact_data = {}
+            if hasattr(self, 'left_foot_contact') and self.left_foot_contact is not None:
+                try:
+                    left_contact_data = {
+                        'net_force_left_foot': self.left_foot_contact.data.net_forces_w.clone(),
+                    }
+                except Exception as e:
+                    print(f" Failed to get left foot contact data: {e}")
+            right_contact_data = {}
+            if hasattr(self, 'right_foot_contact') and self.right_foot_contact is not None:
+                try:
+                    right_contact_data = {
+                        'net_force_right_foot': self.right_foot_contact.data.net_forces_w.clone(),
+                    }
+                except Exception as e:
+                    print(f"Failed to get right foot contact data: {e}")
+
+            # combine all sensor data in extras
+            self.extras = {
+                "amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size),
+                "pelvis_position_global": self.robot.data.body_pos_w[:, self.ref_body_index].clone(),
+                "pelvis_orientation_global": self.robot.data.body_quat_w[:, self.ref_body_index].clone(),
+                "pelvis_linear_velocity_global": self.robot.data.body_lin_vel_w[:, self.ref_body_index].clone(),
+                "pelvis_angular_velocity_global": self.robot.data.body_ang_vel_w[:, self.ref_body_index].clone(),
+                **imu_data,
+                **left_contact_data,
+                **right_contact_data,
+            }
+        else:
+            # For training, only provide the necessary AMP observations
+            self.extras = {
+                "amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size)
+            }
 
         return {"policy": obs}
 
@@ -393,7 +401,8 @@ class SimonBiomechEnv(DirectRLEnv):
     def step(self, actions):
         obs, rewards, terminated, truncated, info = super().step(actions)
         # Add extras to info so they can be accessed in the biomechanics script
-        if hasattr(self, 'extras') and self.extras:
+        # Only populate extras if we are in a mode that requires it (e.g. eval)
+        if self.cfg.save_biomechanics_data and hasattr(self, 'extras') and self.extras:
             info["extras"] = self.extras
         return obs, rewards, terminated, truncated, info
 

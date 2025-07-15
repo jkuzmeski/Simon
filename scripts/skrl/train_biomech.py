@@ -15,13 +15,16 @@ a more user-friendly way.
 import argparse
 import sys
 
+# store the original command-line arguments
+_cli_command = " ".join(sys.argv)
+
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with skrl.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=400, help="Length of the recorded video (in steps).")
-parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
+parser.add_argument("--video_interval", type=int, default=10000, help="Interval between video recordings (in steps).")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
@@ -167,7 +170,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "task": args_cli.task,
         "algorithm": args_cli.algorithm,
         "ml_framework": args_cli.ml_framework,
-        "seed": agent_cfg["seed"]
+        "seed": agent_cfg["seed"],
+        "cli_command": _cli_command,
     }
     dump_yaml(os.path.join(log_dir, "params", "metadata.yaml"), metadata)
     dump_pickle(os.path.join(log_dir, "params", "metadata.pkl"), metadata)

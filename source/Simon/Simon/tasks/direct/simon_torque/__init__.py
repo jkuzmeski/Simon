@@ -68,28 +68,6 @@ gym.register(
     },
 )
 
-# Training environments (sensors disabled for performance)
-gym.register(
-    id="Simon-Train-Run-Biomech-Large",
-    entry_point=f"{__name__}.simon_biomech_env:SimonBiomechEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.simon_biomech_env_cfg:SimonBiomechTrainRunEnvCfg",
-        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_biomech_large_cfg.yaml",
-    },
-)
-
-# Evaluation environments (full sensors enabled for biomechanics analysis)
-gym.register(
-    id="Simon-Eval-Run-Biomech-Large",
-    entry_point=f"{__name__}.simon_biomech_env:SimonBiomechEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.simon_biomech_env_cfg:SimonBiomechEvalRunEnvCfg",
-        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_simon_run_biomech_large_cfg.yaml",
-    },
-)
-
 gym.register(
     id="Simon-Eval-Walk-Biomech",
     entry_point=f"{__name__}.simon_biomech_env:SimonBiomechEnv",

@@ -11,6 +11,7 @@ from dataclasses import MISSING
 from isaaclab_assets.robots.simon_IMU import simon_IMU  # Changed import
 
 from isaaclab.actuators import ImplicitActuatorCfg
+# from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -25,7 +26,7 @@ class SimonBiomechEnvCfg(DirectRLEnvCfg):
     """Humanoid AMP environment config (base class)."""
 
     # env
-    episode_length_s = 10000
+    episode_length_s = 10
     decimation = 1
     
     # sensor configuration
@@ -37,7 +38,7 @@ class SimonBiomechEnvCfg(DirectRLEnvCfg):
     observation_space = 50  # 14 DOF pos + 14 DOF vel + 1 root height + 6 tangent/normal + 3 lin vel + 3 ang vel + 9 key body pos = 50
     action_space = 14  # 14 DOF actions (matching your DOF count)
     state_space = 0
-    num_amp_observations = 4
+    num_amp_observations = 8
     amp_observation_space = 50  # Should match observation_space for AMP
 
     early_termination = True
@@ -64,7 +65,7 @@ class SimonBiomechEnvCfg(DirectRLEnvCfg):
     )
 
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=3072, env_spacing=5.0, replicate_physics=True)  # Increased num_envs from 2048 to 3072
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=3072, env_spacing=2.5, replicate_physics=True)  # Increased num_envs from 2048 to 3072
 
     # robot
     robot: ArticulationCfg = simon_IMU.replace(prim_path="/World/envs/env_.*/Robot").replace(  # Changed to simon_half_CFG
@@ -72,7 +73,6 @@ class SimonBiomechEnvCfg(DirectRLEnvCfg):
         actuators={
             "body": ImplicitActuatorCfg(
                 joint_names_expr=[".*"],
-                velocity_limit_sim=100.0,  # Changed from velocity_limit
                 stiffness=None,
                 damping=None,
             ),
@@ -94,7 +94,7 @@ class SimonBiomechWalkEnvCfg(SimonBiomechEnvCfg):
 class SimonBiomechTrainEnvCfg(SimonBiomechEnvCfg):
     """Training environment - optimized for speed"""
     # More environments for training
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=2048, env_spacing=5.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=3072, env_spacing=5.0, replicate_physics=True)
     
     # Disable expensive sensors during training
     enable_imu_sensor = False
